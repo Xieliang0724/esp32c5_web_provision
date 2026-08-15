@@ -1,0 +1,8 @@
+# 构建产物
+build/
+managed_components/
+
+# 生成文件
+sdkconfig
+sdkconfig.old
+dependencies.lock

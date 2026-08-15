@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>ESP32-C5 配网</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif;
+    background: #f0f4f8; color: #1f2937; padding: 16px; min-height: 100vh;
+  }
+  .card {
+    max-width: 480px; margin: 24px auto; background: #fff;
+    border-radius: 14px; padding: 24px; box-shadow: 0 4px 20px rgba(0,0,0,.08);
+  }
+  h1 { font-size: 20px; margin-bottom: 6px; display: flex; align-items: center; gap: 8px; }
+  .sub { color: #6b7280; font-size: 13px; margin-bottom: 16px; }
+  .status {
+    background: #eef2ff; border: 1px solid #c7d2fe; color: #3730a3;
+    border-radius: 8px; padding: 10px 12px; font-size: 14px; margin-bottom: 18px;
+    word-break: break-all;
+  }
+  .status.ok { background: #ecfdf5; border-color: #a7f3d0; color: #065f46; }
+  .status.err { background: #fef2f2; border-color: #fecaca; color: #991b1b; }
+  label { display: block; font-size: 13px; font-weight: 600; margin: 14px 0 6px; }
+  input[type=text], input[type=password], select {
+    width: 100%; padding: 10px 12px; border: 1px solid #d1d5db; border-radius: 8px;
+    font-size: 15px; background: #fff;
+  }
+  input:focus, select:focus { outline: 2px solid #6366f1; border-color: transparent; }
+  .row { display: flex; gap: 8px; }
+  .row select { flex: 1; }
+  .row button { flex-shrink: 0; }
+  .radio { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 400; margin: 8px 0; cursor: pointer; }
+  .radio input { width: 16px; height: 16px; }
+  #staticFields { background: #f9fafb; border: 1px dashed #d1d5db; border-radius: 8px; padding: 4px 12px 12px; margin-top: 6px; }
+  button {
+    width: 100%; padding: 12px; border: none; border-radius: 10px;
+    font-size: 15px; font-weight: 600; cursor: pointer; margin-top: 18px;
+    background: #4f46e5; color: #fff;
+  }
+  button:active { opacity: .85; }
+  button.secondary { background: #e5e7eb; color: #374151; }
+  button.danger { background: #fee2e2; color: #b91c1c; }
+  button:disabled { opacity: .5; cursor: not-allowed; }
+  .hint { color: #9ca3af; font-size: 12px; margin-top: 4px; }
+  .netinfo { margin: 12px 0 4px; border: 1px solid #e5e7eb; border-radius: 10px; padding: 4px 14px; }
+  .netinfo .item { display: flex; justify-content: space-between; padding: 7px 0; border-bottom: 1px dashed #f0f0f0; font-size: 13px; }
+  .netinfo .item:last-child { border-bottom: none; }
+  .netinfo .item span { color: #6b7280; }
+  .netinfo .item b { font-weight: 600; word-break: break-all; text-align: right; }
+  .netinfo .item b.on { color: #059669; }
+  .netinfo .item b.off { color: #b91c1c; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>📶 ESP32-C5 配网</h1>
+  <div class="sub">连接热点后，在此选择 Wi-Fi 并配置网络参数</div>
+
+  <!-- 网络状态面板 -->
+  <div class="netinfo">
+    <div class="item"><span>STA 状态</span><b id="staState">检测中…</b></div>
+    <div class="item"><span>Wi-Fi (SSID)</span><b id="staSsid">-</b></div>
+    <div class="item"><span>IP 地址</span><b id="staIp">-</b></div>
+    <div class="item"><span>网关</span><b id="staGw">-</b></div>
+    <div class="item"><span>子网掩码</span><b id="staMask">-</b></div>
+    <div class="item"><span>DNS</span><b id="staDns">-</b></div>
+    <div class="item"><span>信号强度</span><b id="staRssi">-</b></div>
+    <div class="item"><span>热点 (AP) 状态</span><b id="apState">-</b></div>
+    <div class="item"><span>AP 名称</span><b id="apSsid">-</b></div>
+    <div class="item"><span>AP 客户端数</span><b id="apClients">-</b></div>
+    <div class="item"><span>固件版本</span><b id="fwVersion">-</b></div>
+  </div>
+
+  <!-- AP 开关 + 进入配网模式 -->
+  <div style="margin:10px 0;">
+    <button type="button" id="btnApToggle" class="secondary" style="margin-top:0;">…</button>
+    <button type="button" id="btnReconfig" class="secondary" style="margin-top:8px;">📲 进入配网模式（断开 Wi-Fi）</button>
+  </div>
+
+  <div id="status" class="status">状态：检测中…</div>
+
+  <form id="cfgForm" autocomplete="off">
+    <label for="ssidSelect">Wi-Fi 名称 (SSID)</label>
+    <div class="row">
+      <select id="ssidSelect"><option value="">— 扫描中… —</option></select>
+      <button type="button" id="btnScan" class="secondary" style="margin-top:0;width:auto;padding:10px 14px;">刷新</button>
+    </div>
+    <input type="text" id="ssidManual" placeholder="或手动输入 SSID（支持隐藏网络）" style="margin-top:8px;">
+
+    <label for="password">密码</label>
+    <input type="password" id="password" placeholder="开放网络可留空">
+
+    <label>IP 方式</label>
+    <label class="radio"><input type="radio" name="ipmode" value="dhcp" checked> 自动获取 (DHCP)</label>
+    <label class="radio"><input type="radio" name="ipmode" value="static"> 静态 IP</label>
+    <div id="staticFields" style="display:none;">
+      <label for="ip">IP 地址</label>
+      <input type="text" id="ip" placeholder="如 192.168.1.100">
+      <label for="mask">子网掩码（可选）</label>
+      <input type="text" id="mask" placeholder="默认 255.255.255.0">
+      <label for="gw">网关</label>
+      <input type="text" id="gw" placeholder="如 192.168.1.1">
+      <label for="dns">DNS（可选）</label>
+      <input type="text" id="dns" placeholder="默认使用网关地址">
+    </div>
+
+    <label class="radio"><input type="checkbox" id="apOff" checked> 连接成功后关闭热点 (AP)</label>
+
+    <button type="submit" id="btnSubmit">保存并连接</button>
+    <button type="button" id="btnReset" class="danger">清除配置并重新配网</button>
+  </form>
+
+  <!-- 高级设置：Modbus 网关 -->
+  <details id="advSettings" style="margin-top:20px;">
+    <summary style="cursor:pointer;font-weight:600;color:#4f46e5;padding:8px 0;">⚙️ 高级设置（Modbus RTU↔TCP 网关）</summary>
+    <div style="margin-top:8px;">
+      <label class="radio"><input type="checkbox" id="gwEnabled"> 启用 Modbus 网关（ESP32 作为 TCP 服务端）</label>
+
+      <label for="gwPort">本地 TCP 端口</label>
+      <input type="number" id="gwPort" min="1" max="65535" placeholder="默认 502">
+
+      <label for="gwIp">允许的客户端 IP（留空 = 无限制）</label>
+      <input type="text" id="gwIp" placeholder="如 192.168.0.50，留空允许所有">
+
+      <label for="gwBaud">RTU 波特率</label>
+      <select id="gwBaud">
+        <option value="1200">1200</option>
+        <option value="2400">2400</option>
+        <option value="4800">4800</option>
+        <option value="9600">9600</option>
+        <option value="19200">19200</option>
+        <option value="38400">38400</option>
+        <option value="57600">57600</option>
+        <option value="115200">115200</option>
+      </select>
+
+      <label for="gwTx">UART1 TX GPIO</label>
+      <input type="number" id="gwTx" min="0" max="48" placeholder="如 5">
+      <label for="gwRx">UART1 RX GPIO</label>
+      <input type="number" id="gwRx" min="0" max="48" placeholder="如 6">
+
+      <div class="hint">⚠️ TX/RX 不能相同，且不要使用 GPIO11/12（串口控制台）和 GPIO27（RGB 灯）</div>
+      <button type="button" id="btnGwSave" class="secondary">保存网关设置</button>
+      <div id="gwStatus" class="hint"></div>
+    </div>
+  </details>
+</div>
+
+<script>
+(function () {
+  var statusEl = document.getElementById('status');
+  var selectEl = document.getElementById('ssidSelect');
+  var manualEl = document.getElementById('ssidManual');
+  var staticFields = document.getElementById('staticFields');
+  var scanTimer = null;
+  var lastState = '';
+  var sawConnecting = false;   /* 是否已进入过“连接中”（用于区分报错原因） */
+
+  function setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className = 'status' + (cls ? ' ' + cls : '');
+  }
+
+  /* ---- 状态轮询 ---- */
+  function setVal(id, v) {
+    var el = document.getElementById(id);
+    if (el) el.textContent = v;
+  }
+
+  function updateNetInfo(d) {
+    var stText, stCls;
+    if (d.state === 'connected') stText = '✅ 已联网', stCls = 'on';
+    else if (d.state === 'connecting') stText = '⏳ 连接中', stCls = '';
+    else stText = '🔧 未联网（配网模式）', stCls = 'off';
+    setVal('staState', stText);
+    setVal('staSsid', d.ssid || '-');
+    setVal('staIp', d.ip || '-');
+    setVal('staGw', d.gateway || '-');
+    setVal('staMask', d.netmask || '-');
+    setVal('staDns', d.dns || '-');
+    setVal('staRssi', d.rssi ? d.rssi + ' dBm' : '-');
+    setVal('apState', d.ap_on ? '🟢 开启' : '🔴 已关闭');
+    setVal('apSsid', d.ap_on ? (d.ap_ssid || '-') : '-');
+    setVal('apClients', d.ap_on ? (d.ap_clients + ' 个') : '-');
+    setVal('fwVersion', d.version || '-');
+    document.getElementById('staState').className = stCls;
+    document.getElementById('apState').className = d.ap_on ? 'on' : 'off';
+
+    /* AP 开关按钮 */
+    var btn = document.getElementById('btnApToggle');
+    btn.disabled = false;
+    btn.textContent = d.ap_on ? '📴 关闭热点 (AP)' : '📶 开启热点 (AP)';
+    /* 进入配网模式按钮：仅联网/连接中可用 */
+    document.getElementById('btnReconfig').disabled =
+      (d.state !== 'connected' && d.state !== 'connecting');
+  }
+
+  function pollStatus() {
+    fetch('/api/status').then(function (r) { return r.json(); }).then(function (d) {
+      updateNetInfo(d);
+      if (d.state === 'connected') {
+        sawConnecting = false;
+        setStatus('✅ 已连接：' + d.ssid + '，IP = ' + (d.ip || '获取中…') + (d.ap_on ? '（热点保持开启）' : ''), 'ok');
+      } else if (d.state === 'connecting') {
+        sawConnecting = true;
+        setStatus('⏳ 正在连接 ' + d.ssid + ' …（如需修改，直接重新填写并保存即可）');
+      } else {
+        setStatus('🔧 配网模式：请选择 Wi-Fi 并点击"保存并连接"');
+      }
+      /* 按钮始终可点击：连接中重新提交会以新配置重连，方便修正错误 SSID/密码 */
+      document.getElementById('btnSubmit').disabled = false;
+    }).catch(function () {
+      if (sawConnecting) {
+        /* 刚保存过配置：热点可能已按配置关闭，提示切回家庭 Wi-Fi */
+        setStatus('📶 设备正在联网，热点可能已关闭…请将手机连回家庭 Wi-Fi，' +
+                  '然后在浏览器输入设备的 IP 地址访问本页面', 'ok');
+      } else {
+        setStatus('❌ 无法连接设备，请确认已连接其热点', 'err');
+      }
+    });
+  }
+  setInterval(pollStatus, 2000);
+  pollStatus();
+
+  /* ---- AP 开关 ---- */
+  document.getElementById('btnApToggle').addEventListener('click', function () {
+    var btn = this;
+    var wantOn = !document.getElementById('apState').textContent.startsWith('🟢');
+    btn.disabled = true;
+    fetch('/api/ap', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ap_on: wantOn })
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (d.status === 'ok') {
+        setStatus(wantOn ? '📶 热点已开启' : '📴 热点已关闭', 'ok');
+      } else {
+        setStatus('❌ ' + (d.msg || '操作失败'), 'err');
+        btn.disabled = false;
+      }
+      pollStatus();
+    }).catch(function () {
+      setStatus('❌ 操作失败，请重试', 'err');
+      btn.disabled = false;
+    });
+  });
+
+  /* ---- 进入配网模式（断开 STA）---- */
+  document.getElementById('btnReconfig').addEventListener('click', function () {
+    if (!confirm('确定断开当前 Wi-Fi 并进入配网模式吗？\n设备将开启热点，请连接热点后访问 http://192.168.4.1 重新配网')) return;
+    var btn = this;
+    btn.disabled = true;
+    fetch('/api/disconnect', { method: 'POST' })
+      .then(function () {
+        setStatus('📲 已断开 Wi-Fi，正在进入配网模式…请连接热点 ESP32C5-5C71', 'ok');
+      })
+      .catch(function () {
+        setStatus('❌ 操作失败，请重试', 'err');
+        btn.disabled = false;
+      });
+  });
+
+  /* ---- 扫描 ---- */
+  function startScan() {
+    if (scanTimer) { clearTimeout(scanTimer); scanTimer = null; }
+    selectEl.disabled = true;
+    selectEl.innerHTML = '<option value="">— 扫描中… —</option>';
+    doScan();
+  }
+
+  function doScan() {
+    fetch('/api/scan').then(function (r) { return r.json(); }).then(function (d) {
+      if (d.status === 'ok') {
+        selectEl.disabled = false;
+        var opts = '<option value="">— 请选择 Wi-Fi —</option>';
+        (d.networks || []).forEach(function (n) {
+          var label = n.ssid + '  [' + n.band + ' CH' + n.channel + ' ' + n.rssi + 'dBm ' + n.auth + ']';
+          opts += '<option value="' + esc(n.ssid) + '">' + esc(label) + '</option>';
+        });
+        selectEl.innerHTML = opts;
+      } else if (d.status === 'scanning') {
+        scanTimer = setTimeout(doScan, 1500);   /* 扫描进行中，稍后重试 */
+      } else {
+        /* 业务模式下扫描被禁用：停止重试，显示原因 */
+        selectEl.disabled = false;
+        selectEl.innerHTML = '<option value="">' + esc(d.msg || '扫描不可用') + '</option>';
+      }
+    }).catch(function () { scanTimer = setTimeout(doScan, 2000); });
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+  }
+
+  selectEl.addEventListener('change', function () {
+    if (selectEl.value) { manualEl.value = selectEl.value; }
+  });
+  document.getElementById('btnScan').addEventListener('click', startScan);
+
+  /* ---- IP 方式切换 ---- */
+  document.querySelectorAll('input[name=ipmode]').forEach(function (r) {
+    r.addEventListener('change', function () {
+      staticFields.style.display = (r.value === 'static') ? 'block' : 'none';
+    });
+  });
+
+  /* ---- 提交配置 ---- */
+  document.getElementById('cfgForm').addEventListener('submit', function (e) {
+    e.preventDefault();
+    var ssid = manualEl.value.trim();
+    if (!ssid) { setStatus('⚠️ 请选择或输入 SSID', 'err'); return; }
+    var isStatic = document.querySelector('input[name=ipmode]:checked').value === 'static';
+    if (isStatic) {
+      if (!document.getElementById('ip').value.trim() || !document.getElementById('gw').value.trim()) {
+        setStatus('⚠️ 静态 IP 模式下，IP 地址和网关必填', 'err');
+        return;
+      }
+    }
+    var body = {
+      ssid: ssid,
+      password: document.getElementById('password').value,
+      ip_mode: isStatic ? 'static' : 'dhcp',
+      ip: document.getElementById('ip').value.trim(),
+      netmask: document.getElementById('mask').value.trim(),
+      gateway: document.getElementById('gw').value.trim(),
+      dns: document.getElementById('dns').value.trim(),
+      ap_off: document.getElementById('apOff').checked
+    };
+    var btn = document.getElementById('btnSubmit');
+    btn.disabled = true;
+    fetch('/api/config', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (r) { return r.json(); }).then(function (d) {
+      if (d.status === 'ok') {
+        var off = document.getElementById('apOff').checked;
+        setStatus(off
+          ? '✅ 配置已保存！设备联网成功后热点将自动关闭，届时请将手机连回家庭 Wi-Fi'
+          : '✅ 配置已保存，正在连接 ' + ssid + ' …', 'ok');
+      } else {
+        setStatus('❌ 保存失败：' + (d.msg || '未知错误'), 'err');
+        btn.disabled = false;
+      }
+    }).catch(function () {
+      setStatus('❌ 提交失败，请重试', 'err');
+      btn.disabled = false;
+    });
+  });
+
+  /* ---- 重置 ---- */
+  document.getElementById('btnReset').addEventListener('click', function () {
+    if (!confirm('确定清除已保存的配置并重新配网吗？')) return;
+    fetch('/api/reset', { method: 'POST' }).then(function () {
+      setStatus('🔄 已清除配置，设备将回到配网模式…', 'ok');
+    });
+  });
+
+  /* ---- 高级设置：Modbus 网关 ---- */
+  var gwStatus = document.getElementById('gwStatus');
+
+  function loadGwConfig() {
+    fetch('/api/gw').then(function (r) { return r.json(); }).then(function (d) {
+      document.getElementById('gwEnabled').checked = !!d.enabled;
+      document.getElementById('gwPort').value = d.port || 502;
+      document.getElementById('gwIp').value = d.client_ip || '';
+      document.getElementById('gwBaud').value = String(d.baud || 9600);
+      document.getElementById('gwTx').value = d.tx;
+      document.getElementById('gwRx').value = d.rx;
+    }).catch(function () {
+      gwStatus.textContent = '⚠️ 读取网关配置失败';
+    });
+  }
+
+  document.getElementById('btnGwSave').addEventListener('click', function () {
+    var body = {
+      enabled: document.getElementById('gwEnabled').checked,
+      port: parseInt(document.getElementById('gwPort').value, 10) || 502,
+      client_ip: document.getElementById('gwIp').value.trim(),
+      baud: parseInt(document.getElementById('gwBaud').value, 10) || 9600,
+      tx: parseInt(document.getElementById('gwTx').value, 10),
+      rx: parseInt(document.getElementById('gwRx').value, 10)
+    };
+    if (body.tx === body.rx) {
+      gwStatus.textContent = '❌ TX 和 RX 不能相同';
+      return;
+    }
+    var btn = document.getElementById('btnGwSave');
+    btn.disabled = true;
+    gwStatus.textContent = '⏳ 保存中…';
+    fetch('/api/gw', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      if (!r.ok) { throw new Error('HTTP ' + r.status); }
+      return r.json();
+    }).then(function (d) {
+      if (d.status === 'ok') {
+        gwStatus.textContent = '✅ 网关配置已保存并生效' + (body.enabled ? '（已启用）' : '（已停用）');
+      } else {
+        gwStatus.textContent = '❌ 保存失败：' + (d.msg || '未知错误');
+      }
+      btn.disabled = false;
+    }).catch(function (e) {
+      gwStatus.textContent = '❌ 保存失败：' + e.message;
+      btn.disabled = false;
+    });
+  });
+
+  loadGwConfig();
+  startScan();
+})();
+</script>
+</body>
+</html>

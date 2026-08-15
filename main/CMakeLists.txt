@@ -1,0 +1,28 @@
+idf_component_register(
+    SRCS
+        "app_main.c"
+        "config_store.c"
+        "wifi_mgr.c"
+        "web_server.c"
+        "rgb_led.c"
+        "modbus_gw.c"
+    INCLUDE_DIRS "."
+    EMBED_FILES
+        "www/index.html"
+    REQUIRES
+        esp_wifi
+        esp_netif
+        esp_event
+        nvs_flash
+        esp_http_server
+        cjson
+        esp_timer
+        driver
+        esp_driver_gpio
+        esp_driver_uart
+        esp_system
+        esp_app_format
+        led_strip
+        lwip
+        mdns
+)

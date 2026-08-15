@@ -1,0 +1,30 @@
+{
+    "configurations": [
+        {
+            "name": "ESP-IDF",
+            "compilerPath": "${config:idf.toolsPath}/tools/riscv32-esp-elf/esp-15.2.0_20251204/riscv32-esp-elf/bin/riscv32-esp-elf-gcc",
+            "compileCommands": "${workspaceFolder}/build/compile_commands.json",
+            "includePath": [
+                "${config:idf.espIdfPath}/components/**",
+                "${config:idf.espIdfPath}/components/*/include/**",
+                "${config:idf.espIdfPath}/tools/cmake/project_include/**",
+                "${workspaceFolder}/build/config/**",
+                "${workspaceFolder}/managed_components/**",
+                "${workspaceFolder}/main"
+            ],
+            "browse": {
+                "path": [
+                    "${config:idf.espIdfPath}/components",
+                    "${workspaceFolder}/build/config",
+                    "${workspaceFolder}/managed_components",
+                    "${workspaceFolder}/main"
+                ],
+                "limitSymbolsToIncludedHeaders": true
+            },
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-gcc-x64"
+        }
+    ],
+    "version": 4
+}

@@ -1,0 +1,54 @@
+menu "Web Provisioning Configuration"
+
+    config PROV_AP_SSID_PREFIX
+        string "SoftAP SSID prefix"
+        default "ESP32C5"
+        help
+            SoftAP 的 SSID 前缀，实际 SSID 为 <前缀>-<MAC后4位>，
+            例如 ESP32C5-1A2B。
+
+    config PROV_AP_PASSWORD
+        string "SoftAP password (empty = open AP)"
+        default ""
+        help
+            SoftAP 的密码，留空表示开放网络（推荐配网场景）。
+            若设置，长度须 >= 8。
+
+    config PROV_AP_CHANNEL
+        int "SoftAP channel"
+        default 1
+        range 1 14
+        help
+            SoftAP 使用的 2.4G 信道。
+
+    config PROV_CONNECT_RETRY_MAX
+        int "STA connect max retries"
+        default 5
+        help
+            STA 连接失败的最大重试次数，超过后自动重新打开
+            SoftAP 进入配网模式。
+
+    config PROV_STA_TIMEOUT_MS
+        int "STA connect timeout (ms)"
+        default 20000
+        help
+            单次连接超时时间（毫秒），用于判断连接是否卡住。
+
+    config PROV_RESET_GPIO
+        int "Reset-to-config GPIO (long press 3s, -1 to disable)"
+        default 9
+        range -1 48
+        help
+            长按 3 秒清除配置并重启进入配网模式的 GPIO。
+            常见开发板（DevKitC/C3/C6 系）的 BOOT 按键为 GPIO9，
+            请按你的板子调整；设为 -1 禁用。
+
+    config PROV_LED_GPIO
+        int "RGB status LED GPIO"
+        default 27
+        range -1 48
+        help
+            板载可寻址 RGB 灯珠（WS2812）所在 GPIO。
+            ESP32-C5-DevKitC-1 为 GPIO27；设为 -1 禁用指示灯。
+
+endmenu

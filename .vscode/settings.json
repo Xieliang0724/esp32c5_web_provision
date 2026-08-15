@@ -1,0 +1,7 @@
+{
+    // 本文件仅作用于当前项目文件夹，不影响 VS Code 全局设置。
+    // 钉住 IDF v6.0.1 路径，确保 ESP-IDF 扩展使用正确的工具链。
+    "idf.espIdfPath": "/Users/alvin.xie/.espressif/v6.0.1/esp-idf",
+    "idf.toolsPath": "/Users/alvin.xie/.espressif",
+    "idf.flashType": "UART"
+}
