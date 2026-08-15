@@ -117,6 +117,29 @@ idf.py -p /dev/cu.usbmodem* flash monitor      # macOS 串口设备名
 
 **接线**：ESP32 `TX GPIO5` → GD32 `RX`，ESP32 `RX GPIO6` ← GD32 `TX`，共地 GND。TCP 请求中的单元号（MBAP uid）即 RTU 从站地址。
 
+## 版本管理（git tag）
+
+当前版本 **v1.0.0** 已打标签，固件内置版本号（网页状态面板 / `/api/status` / 串口日志 `App version:` 均可查看）。
+
+**发布新版本**（改完代码后）：
+
+```bash
+git add -A
+git commit -m "v1.1.0: 新功能描述"
+git tag -a v1.1.0 -m "v1.1.0"
+idf.py build && idf.py -p /dev/cu.usbserial-5C310834821 flash
+```
+
+**回退到旧版本**（出问题时一键回到上个可用版本）：
+
+```bash
+git checkout v1.0.0
+idf.py build && idf.py -p /dev/cu.usbserial-5C310834821 flash
+git checkout master   # 回退完切回最新代码继续开发
+```
+
+> 提示：版本号由 `git describe` 自动生成（即 `PROJECT_VER`）；`build/`、`sdkconfig` 等已加入 `.gitignore` 不入库。若需**运行时自动回退**（OTA 升级失败自动回滚旧固件），可后续基于 IDF 的 OTA + `esp_ota_mark_app_valid_cancel_rollback` 机制扩展。
+
 ## 常见问题
 
 - **连不上热点**：确认热点名是 `ESP32C5-XXXX`（日志中会打印）；若设了密码，确认密码 ≥8 位
