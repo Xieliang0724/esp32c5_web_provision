@@ -23,6 +23,10 @@ static const char *TAG = "web_srv";
 extern const uint8_t index_html_start[] asm("_binary_index_html_start");
 extern const uint8_t index_html_end[]   asm("_binary_index_html_end");
 
+/* 内嵌 TLS 服务器证书（用于 /api/cert 下载） */
+extern const uint8_t server_cert_pem_start[] asm("_binary_server_cert_pem_start");
+extern const uint8_t server_cert_pem_end[]   asm("_binary_server_cert_pem_end");
+
 #define MAX_POST_BODY 1024
 #define SCAN_LIST_MAX 30
 
@@ -105,6 +109,16 @@ static esp_err_t handle_root(httpd_req_t *req)
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_send(req, (const char *)index_html_start, len);
+}
+
+/* 下载设备 TLS 证书（仅公钥证书，供客户端信任设备） */
+static esp_err_t handle_cert_get(httpd_req_t *req)
+{
+    size_t len = server_cert_pem_end - server_cert_pem_start;
+    httpd_resp_set_type(req, "application/x-pem-file");
+    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=esp32c5_cert.pem");
+    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
+    return httpd_resp_send(req, (const char *)server_cert_pem_start, len);
 }
 
 static esp_err_t handle_status(httpd_req_t *req)
@@ -546,6 +560,7 @@ static esp_err_t register_handlers(httpd_handle_t server)
 {
     static const httpd_uri_t uris[] = {
         { .uri = "/",             .method = HTTP_GET,  .handler = handle_root },
+        { .uri = "/api/cert",     .method = HTTP_GET,  .handler = handle_cert_get },
         { .uri = "/api/status",   .method = HTTP_GET,  .handler = handle_status },
         { .uri = "/api/scan",     .method = HTTP_GET,  .handler = handle_scan },
         { .uri = "/api/config",   .method = HTTP_POST, .handler = handle_config_post },
