@@ -38,6 +38,7 @@ static bool s_ap_off_after_connect = false;  /* 本次连接成功后是否关�
 
 static esp_timer_handle_t s_conn_timeout_timer = NULL;
 static esp_timer_handle_t s_conn_retry_timer = NULL;
+static esp_timer_handle_t s_ap_fallback_timer = NULL;   /* STA 断开延迟后开启 AP 兜底 */
 
 static wifi_mgr_ap_cb_t s_ap_cb = NULL;
 static bool s_scanning = false;
@@ -213,7 +214,6 @@ static void on_conn_timeout(void *arg)
         wifi_mgr_enter_config_mode();
         return;
     }
-    wifi_mgr_ap_enable();     /* 兜底：连接中 AP 必须保持可用 */
     esp_wifi_disconnect();    /* 清理挂起的连接 */
     esp_wifi_connect();
     esp_timer_start_once(s_conn_timeout_timer, CONN_TIMEOUT_MS * 1000);
@@ -224,15 +224,35 @@ static void on_conn_retry(void *arg)
     if (s_state != WIFI_MGR_STATE_CONNECTING) {
         return;
     }
-    /* 兜底：STA 断开重试期间必须开启 AP，避免 AP/STA 同时失联。
-     * 无复位按钮的板子尤其关键 —— 用户可随时连热点恢复。
-     * （联网成功后 GOT_IP 会按 ap_off 配置再关闭 AP） */
-    wifi_mgr_ap_enable();
     ESP_LOGI(TAG, "retry connect (%d/%d)", s_retry_count, CONN_RETRY_MAX);
     esp_err_t ret = esp_wifi_connect();
     if (ret == ESP_OK) {
         esp_timer_start_once(s_conn_timeout_timer, CONN_TIMEOUT_MS * 1000);
     }
+}
+
+/* STA 断开超过阈值仍没连上 -> 开启 AP 兜底，防止 AP/STA 同时失联 */
+static void on_ap_fallback_timeout(void *arg)
+{
+    if (s_state == WIFI_MGR_STATE_CONNECTED) {
+        return;   /* 已重连，无需兜底 */
+    }
+    if (s_ap_on) {
+        return;   /* AP 已开 */
+    }
+    ESP_LOGW(TAG, "STA down too long, enabling fallback AP");
+    wifi_mgr_ap_enable();
+}
+
+/* 在 STA 断开且 AP 关闭时，延迟开启 AP 兜底（短暂抖动不触发） */
+static void arm_ap_fallback(void)
+{
+    uint32_t delay_s = s_cfg.ap_fallback_delay;
+    if (delay_s == 0) {
+        delay_s = 15;   /* 缺省 15 秒 */
+    }
+    esp_timer_stop(s_ap_fallback_timer);
+    esp_timer_start_once(s_ap_fallback_timer, delay_s * 1000000ULL);
 }
 
 static void arm_retry_timer(void)
@@ -245,6 +265,7 @@ static void disarm_conn_timers(void)
 {
     esp_timer_stop(s_conn_timeout_timer);
     esp_timer_stop(s_conn_retry_timer);
+    esp_timer_stop(s_ap_fallback_timer);
 }
 
 /* ------------------------------------------------------------------ */
@@ -295,6 +316,9 @@ esp_err_t wifi_mgr_init(void)
     targs.callback = on_conn_retry;
     targs.name = "conn_retry";
     esp_timer_create(&targs, &s_conn_retry_timer);
+    targs.callback = on_ap_fallback_timeout;
+    targs.name = "ap_fallback";
+    esp_timer_create(&targs, &s_ap_fallback_timer);
 
     return ESP_OK;
 }
@@ -543,7 +567,11 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
             /* 关键：切回 CONNECTING，否则 on_conn_retry 会因 state != CONNECTING
              * 提前返回，导致既不开 AP 也不重连，设备永久失联 */
             set_state(WIFI_MGR_STATE_CONNECTING);
-            arm_retry_timer();   /* 稍后重连（on_conn_retry 会先开 AP 再连） */
+            arm_retry_timer();   /* 稍后重连 */
+            /* AP 兜底：连续断开超过阈值（默认15s）才开 AP，短暂抖动不触发 */
+            if (!s_ap_on) {
+                arm_ap_fallback();
+            }
         }
         update_led();   /* 断网：回到橙色/蓝色 */
         break;
@@ -601,6 +629,7 @@ static void ip_event_handler(void *arg, esp_event_base_t base, int32_t id, void 
         esp_ip4addr_ntoa(&ev->ip_info.ip, s_sta_ip, sizeof(s_sta_ip));
         ESP_LOGI(TAG, "GOT IP: %s", s_sta_ip);
         disarm_conn_timers();
+        esp_timer_stop(s_ap_fallback_timer);   /* 已重连，取消 AP 兜底 */
         set_state(WIFI_MGR_STATE_CONNECTED);
         s_retry_count = 0;   /* 联网成功，重置重试预算 */
         update_led();   /* 绿色：联网成功 */

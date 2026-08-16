@@ -21,7 +21,10 @@ static const char *TAG = "cfg_store";
 #define KEY_GATEWAY    "gw"
 #define KEY_DNS        "dns"
 #define KEY_AP_OFF     "ap_off"
+#define KEY_AP_FB_DLY  "ap_fb_dly"
 #define KEY_CONFIGURED "configured"
+
+#define AP_FALLBACK_DELAY_DEFAULT 15
 
 static void cfg_clear_struct(wifi_config_data_t *cfg)
 {
@@ -29,6 +32,7 @@ static void cfg_clear_struct(wifi_config_data_t *cfg)
     /* 默认值 */
     cfg->ip_mode = IP_MODE_DHCP;
     cfg->ap_off = true;
+    cfg->ap_fallback_delay = AP_FALLBACK_DELAY_DEFAULT;
 }
 
 esp_err_t config_store_init(void)
@@ -75,6 +79,10 @@ bool config_store_load(wifi_config_data_t *cfg)
     if (nvs_get_u8(h, KEY_AP_OFF, &v) == ESP_OK) {
         cfg->ap_off = (v != 0);
     }
+    uint16_t u16 = 0;
+    if (nvs_get_u16(h, KEY_AP_FB_DLY, &u16) == ESP_OK && u16 > 0) {
+        cfg->ap_fallback_delay = u16;
+    }
 
     if (cfg->ip_mode == IP_MODE_STATIC) {
         len = sizeof(cfg->ip);
@@ -107,6 +115,8 @@ esp_err_t config_store_save(const wifi_config_data_t *cfg)
     ret = nvs_set_u8(h, KEY_IP_MODE, cfg->ip_mode);
     if (ret != ESP_OK) goto done;
     ret = nvs_set_u8(h, KEY_AP_OFF, cfg->ap_off ? 1 : 0);
+    if (ret != ESP_OK) goto done;
+    ret = nvs_set_u16(h, KEY_AP_FB_DLY, cfg->ap_fallback_delay);
     if (ret != ESP_OK) goto done;
 
     if (cfg->ip_mode == IP_MODE_STATIC) {

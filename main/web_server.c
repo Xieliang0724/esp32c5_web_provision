@@ -377,6 +377,11 @@ static esp_err_t handle_config_post(httpd_req_t *req)
     cJSON *j_ap_off = cJSON_GetObjectItem(root, "ap_off");
     cfg.ap_off = (cJSON_IsBool(j_ap_off) && cJSON_IsTrue(j_ap_off)) ? true : false;
 
+    cJSON *j_fb = cJSON_GetObjectItem(root, "ap_fallback_delay");
+    if (cJSON_IsNumber(j_fb) && j_fb->valueint >= 0 && j_fb->valueint <= 3600) {
+        cfg.ap_fallback_delay = j_fb->valueint;
+    }
+
     cJSON_Delete(root);
 
     ret = config_store_save(&cfg);

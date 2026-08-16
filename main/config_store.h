@@ -32,6 +32,7 @@ typedef struct {
     char    gateway[CFG_IP_STR_MAX_LEN];
     char    dns[CFG_IP_STR_MAX_LEN];
     bool    ap_off;                      /* 连接成功后是否关闭 SoftAP */
+    uint16_t ap_fallback_delay;          /* STA 断开多少秒后开 AP 兜底，默认 15 */
 } wifi_config_data_t;
 
 /* 初始化 NVS 分区（幂等） */

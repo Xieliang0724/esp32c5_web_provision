@@ -108,6 +108,9 @@
     </div>
 
     <label class="radio"><input type="checkbox" id="apOff" checked> 连接成功后关闭热点 (AP)</label>
+    <label for="apFallbackDelay" style="margin-top:4px;">断网后开启热点兜底延迟（秒）</label>
+    <input type="number" id="apFallbackDelay" min="0" max="3600" value="15">
+    <div class="hint">STA 连续断开超过该秒数仍未连上时，自动开启热点供重新配网；0 = 立即开启（默认 15 秒）</div>
 
     <button type="submit" id="btnSubmit">保存并连接</button>
     <button type="button" id="btnReset" class="danger">清除配置并重新配网</button>
@@ -333,7 +336,8 @@
       netmask: document.getElementById('mask').value.trim(),
       gateway: document.getElementById('gw').value.trim(),
       dns: document.getElementById('dns').value.trim(),
-      ap_off: document.getElementById('apOff').checked
+      ap_off: document.getElementById('apOff').checked,
+      ap_fallback_delay: parseInt(document.getElementById('apFallbackDelay').value, 10) || 15
     };
     var btn = document.getElementById('btnSubmit');
     btn.disabled = true;
