@@ -213,7 +213,8 @@ static void on_conn_timeout(void *arg)
         wifi_mgr_enter_config_mode();
         return;
     }
-    esp_wifi_disconnect();   /* 清理挂起的连接 */
+    wifi_mgr_ap_enable();     /* 兜底：连接中 AP 必须保持可用 */
+    esp_wifi_disconnect();    /* 清理挂起的连接 */
     esp_wifi_connect();
     esp_timer_start_once(s_conn_timeout_timer, CONN_TIMEOUT_MS * 1000);
 }
@@ -223,6 +224,10 @@ static void on_conn_retry(void *arg)
     if (s_state != WIFI_MGR_STATE_CONNECTING) {
         return;
     }
+    /* 兜底：STA 断开重试期间必须开启 AP，避免 AP/STA 同时失联。
+     * 无复位按钮的板子尤其关键 —— 用户可随时连热点恢复。
+     * （联网成功后 GOT_IP 会按 ap_off 配置再关闭 AP） */
+    wifi_mgr_ap_enable();
     ESP_LOGI(TAG, "retry connect (%d/%d)", s_retry_count, CONN_RETRY_MAX);
     esp_err_t ret = esp_wifi_connect();
     if (ret == ESP_OK) {
@@ -535,7 +540,10 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
             ESP_LOGW(TAG, "max retries reached, enter config mode");
             wifi_mgr_enter_config_mode();
         } else {
-            arm_retry_timer();   /* 稍后重连 */
+            /* 关键：切回 CONNECTING，否则 on_conn_retry 会因 state != CONNECTING
+             * 提前返回，导致既不开 AP 也不重连，设备永久失联 */
+            set_state(WIFI_MGR_STATE_CONNECTING);
+            arm_retry_timer();   /* 稍后重连（on_conn_retry 会先开 AP 再连） */
         }
         update_led();   /* 断网：回到橙色/蓝色 */
         break;
