@@ -429,6 +429,8 @@ static esp_err_t handle_gw_get(httpd_req_t *req)
     cJSON_AddNumberToObject(obj, "tx", cfg.tx_gpio);
     cJSON_AddNumberToObject(obj, "rx", cfg.rx_gpio);
     cJSON_AddStringToObject(obj, "client_ip", cfg.client_ip);
+    cJSON_AddBoolToObject(obj, "tls_enabled", cfg.tls_enabled);
+    cJSON_AddNumberToObject(obj, "tls_port", cfg.tls_port);
     esp_err_t ret = send_json_obj(req, obj);
     cJSON_Delete(obj);
     return ret;
@@ -480,6 +482,14 @@ static esp_err_t handle_gw_post(httpd_req_t *req)
     if (cJSON_IsString(j) && strlen(j->valuestring) < sizeof(cfg.client_ip)) {
         strlcpy(cfg.client_ip, j->valuestring, sizeof(cfg.client_ip));
     }
+    j = cJSON_GetObjectItem(root, "tls_enabled");
+    if (cJSON_IsBool(j)) {
+        cfg.tls_enabled = cJSON_IsTrue(j);
+    }
+    j = cJSON_GetObjectItem(root, "tls_port");
+    if (cJSON_IsNumber(j) && j->valueint >= 1 && j->valueint <= 65535) {
+        cfg.tls_port = j->valueint;
+    }
 
     if (cfg.tx_gpio == cfg.rx_gpio) {
         cJSON_Delete(root);
@@ -490,6 +500,12 @@ static esp_err_t handle_gw_post(httpd_req_t *req)
     if (cfg.tx_gpio == 11 || cfg.rx_gpio == 11 || cfg.tx_gpio == 12 || cfg.rx_gpio == 12) {
         cJSON_Delete(root);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "GPIO11/12 used by console UART");
+        return ESP_FAIL;
+    }
+    /* TLS 端口不能与明文端口相同 */
+    if (cfg.tls_enabled && cfg.tls_port == cfg.port) {
+        cJSON_Delete(root);
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "TLS port must differ from plain port");
         return ESP_FAIL;
     }
     cJSON_Delete(root);

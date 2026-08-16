@@ -143,6 +143,12 @@
       <input type="number" id="gwRx" min="0" max="48" placeholder="如 6">
 
       <div class="hint">⚠️ TX/RX 不能相同，且不要使用 GPIO11/12（串口控制台）和 GPIO27（RGB 灯）</div>
+
+      <label class="radio" style="margin-top:14px;"><input type="checkbox" id="gwTls"> 启用 Modbus TLS（单向验证，固件内置证书）</label>
+      <label for="gwTlsPort">TLS 端口</label>
+      <input type="number" id="gwTlsPort" min="1" max="65535" placeholder="默认 802（Modbus Security）">
+      <div class="hint">🔒 TLS 与明文端口同时监听；客户端需信任设备证书（见 README）</div>
+
       <button type="button" id="btnGwSave" class="secondary">保存网关设置</button>
       <div id="gwStatus" class="hint"></div>
     </div>
@@ -370,6 +376,8 @@
       document.getElementById('gwBaud').value = String(d.baud || 9600);
       document.getElementById('gwTx').value = d.tx;
       document.getElementById('gwRx').value = d.rx;
+      document.getElementById('gwTls').checked = !!d.tls_enabled;
+      document.getElementById('gwTlsPort').value = d.tls_port || 802;
     }).catch(function () {
       gwStatus.textContent = '⚠️ 读取网关配置失败';
     });
@@ -382,10 +390,16 @@
       client_ip: document.getElementById('gwIp').value.trim(),
       baud: parseInt(document.getElementById('gwBaud').value, 10) || 9600,
       tx: parseInt(document.getElementById('gwTx').value, 10),
-      rx: parseInt(document.getElementById('gwRx').value, 10)
+      rx: parseInt(document.getElementById('gwRx').value, 10),
+      tls_enabled: document.getElementById('gwTls').checked,
+      tls_port: parseInt(document.getElementById('gwTlsPort').value, 10) || 802
     };
     if (body.tx === body.rx) {
       gwStatus.textContent = '❌ TX 和 RX 不能相同';
+      return;
+    }
+    if (body.tls_enabled && body.tls_port === body.port) {
+      gwStatus.textContent = '❌ TLS 端口不能与明文端口相同';
       return;
     }
     var btn = document.getElementById('btnGwSave');
@@ -400,7 +414,7 @@
       return r.json();
     }).then(function (d) {
       if (d.status === 'ok') {
-        gwStatus.textContent = '✅ 网关配置已保存并生效' + (body.enabled ? '（已启用）' : '（已停用）');
+        gwStatus.textContent = '✅ 网关配置已保存并生效' + (body.enabled ? '（已启用' + (body.tls_enabled ? '，TLS 开' : '') + '）' : '（已停用）');
       } else {
         gwStatus.textContent = '❌ 保存失败：' + (d.msg || '未知错误');
       }

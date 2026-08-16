@@ -9,6 +9,8 @@ idf_component_register(
     INCLUDE_DIRS "."
     EMBED_FILES
         "www/index.html"
+        "certs/server_cert.pem"
+        "certs/server_key.pem"
     REQUIRES
         esp_wifi
         esp_netif
@@ -25,4 +27,5 @@ idf_component_register(
         led_strip
         lwip
         mdns
+        mbedtls
 )

@@ -110,12 +110,30 @@ idf.py -p /dev/cu.usbmodem* flash monitor      # macOS 串口设备名
 | 配置项 | 默认 | 说明 |
 |---|---|---|
 | 启用网关 | 关 | 勾选后生效 |
-| 本地 TCP 端口 | 502 | Modbus 标准端口 |
+| 本地 TCP 端口 | 502 | Modbus 明文标准端口 |
 | 允许客户端 IP | 空 | 留空 = 允许所有客户端；填写后仅该 IP 可连 |
 | RTU 波特率 | 9600 | 与 GD32 从站一致 |
 | UART1 TX/RX GPIO | 5 / 6 | 按接线修改，勿用 GPIO11/12（控制台）与 27（RGB） |
+| 启用 TLS | 关 | 单向 TLS（服务端证书），与明文 502 并存 |
+| TLS 端口 | 802 | Modbus Security 标准端口 |
 
 **接线**：ESP32 `TX GPIO5` → GD32 `RX`，ESP32 `RX GPIO6` ← GD32 `TX`，共地 GND。TCP 请求中的单元号（MBAP uid）即 RTU 从站地址。
+
+### Modbus TLS（v1.1.0+）
+
+- 启用后设备同时监听 **明文 502** 和 **TLS 802** 两个端口
+- **单向 TLS**：客户端验证设备证书（`CN=esp32c5.local`，自签名，10 年），设备不验证客户端
+- 测试握手：`openssl s_client -connect <设备IP>:802 -servername esp32c5.local`
+- 自签名证书客户端会提示"不受信任"，属正常
+
+**替换为自己的证书**：把 `main/certs/server_cert.pem` 和 `server_key.pem` 换成你们自己的（重新编译烧录）。生成自签名证书命令：
+
+```bash
+cd main/certs
+openssl req -x509 -newkey rsa:2048 -keyout server_key.pem -out server_cert.pem \
+  -days 3650 -nodes -subj "/CN=esp32c5.local/O=YourOrg" \
+  -addext "subjectAltName=DNS:esp32c5.local,IP:192.168.4.1"
+```
 
 ## 版本管理（git tag）
 

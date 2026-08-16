@@ -57,6 +57,8 @@ typedef struct {
     int8_t   tx_gpio;              /* UART1 TX GPIO */
     int8_t   rx_gpio;              /* UART1 RX GPIO */
     char     client_ip[16];        /* 允许客户端 IP，空 = 无限制 */
+    bool     tls_enabled;          /* 是否启用 TLS 监听（单向，固件内置证书） */
+    uint16_t tls_port;             /* TLS 端口，默认 802 */
 } gw_config_t;
 
 /* 加载网关配置；无保存记录时返回默认值（未启用） */
