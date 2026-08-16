@@ -6,3 +6,6 @@ managed_components/
 sdkconfig
 sdkconfig.old
 dependencies.lock
+
+# TLS 私钥（绝不入库，只保留在本机用于编译）
+main/certs/server_key.pem
