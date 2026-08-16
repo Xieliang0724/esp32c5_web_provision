@@ -602,6 +602,7 @@ static void ip_event_handler(void *arg, esp_event_base_t base, int32_t id, void 
         ESP_LOGI(TAG, "GOT IP: %s", s_sta_ip);
         disarm_conn_timers();
         set_state(WIFI_MGR_STATE_CONNECTED);
+        s_retry_count = 0;   /* 联网成功，重置重试预算 */
         update_led();   /* 绿色：联网成功 */
 
         /* 按配置关闭 SoftAP */
