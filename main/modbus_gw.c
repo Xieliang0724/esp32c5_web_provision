@@ -530,12 +530,29 @@ static void tcp_listener_task(void *arg)
         }
         client_arg_t *ca = malloc(sizeof(client_arg_t));
         if (!ca) {
+            /* 归还槽位，避免泄漏 */
+            xSemaphoreTake(s_slot_mutex, portMAX_DELAY);
+            s_client_fds[slot] = -1;
+            s_client_tasks[slot] = NULL;
+            xSemaphoreGive(s_slot_mutex);
+            ESP_LOGE(TAG, "client arg malloc failed");
             close(client);
             continue;
         }
         ca->fd = client;
         ca->tls = tls;
-        xTaskCreate(tcp_client_task, "mb_tcp_client", 6144, ca, 6, &s_client_tasks[slot]);
+        if (xTaskCreate(tcp_client_task, "mb_tcp_client", 8192, ca, 6,
+                        &s_client_tasks[slot]) != pdPASS) {
+            /* 任务创建失败，归还槽位 */
+            xSemaphoreTake(s_slot_mutex, portMAX_DELAY);
+            s_client_fds[slot] = -1;
+            s_client_tasks[slot] = NULL;
+            xSemaphoreGive(s_slot_mutex);
+            ESP_LOGE(TAG, "client task create failed");
+            free(ca);
+            close(client);
+            continue;
+        }
     }
 
     s_listen_fds[idx] = -1;
