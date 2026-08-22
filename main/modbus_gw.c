@@ -201,7 +201,9 @@ static void uart_rx_task(void *arg)
                     resp[0] = frame_len & 0xFF;
                     resp[1] = (frame_len >> 8) & 0xFF;
                     memcpy(resp + 2, frame, frame_len);
-                    xQueueSend(s_resp_queue, &resp, 0);
+                    if (xQueueSend(s_resp_queue, &resp, 0) != pdTRUE) {
+                        free(resp);   /* 队列满，丢弃并释放，防泄漏 */
+                    }
                 }
                 frame_len = 0;
             }
@@ -258,8 +260,11 @@ static bool rtu_transaction(uint8_t uid, const uint8_t *pdu, size_t pdu_len,
         return false;
     }
 
-    /* 丢弃上一次残留帧，避免错配 */
-    xQueueReset(s_resp_queue);
+    /* 丢弃上一次残留帧（逐个取出释放，直接 Reset 会丢指针泄漏） */
+    uint8_t *stale = NULL;
+    while (xQueueReceive(s_resp_queue, &stale, 0) == pdTRUE) {
+        free(stale);
+    }
 
     int written = uart_write_bytes(GW_UART_NUM, req, req_len);
     if (written != req_len) {
@@ -323,6 +328,7 @@ static int find_free_client_slot(void)
 /* 客户端任务参数 */
 typedef struct {
     int  fd;
+    int  slot;   /* 槽位下标，退出时按它清理（fd 号会被复用，不能作标识） */
     bool tls;
 } client_arg_t;
 
@@ -330,6 +336,7 @@ static void tcp_client_task(void *arg)
 {
     client_arg_t *ca = (client_arg_t *)arg;
     int fd = ca->fd;
+    int slot = ca->slot;
     bool tls = ca->tls;
     free(ca);
 
@@ -340,9 +347,7 @@ static void tcp_client_task(void *arg)
     if (tls) {
         if (!s_tls_ready) {
             ESP_LOGE(TAG, "TLS not ready, close client");
-            close(fd);
-            vTaskDelete(NULL);
-            return;
+            goto client_done;
         }
         mbedtls_ssl_init(&ssl);
         mbedtls_ssl_config_init(&ssl_conf);
@@ -363,9 +368,7 @@ static void tcp_client_task(void *arg)
             ESP_LOGW(TAG, "TLS handshake failed: -0x%04X", -ret);
             mbedtls_ssl_free(&ssl);
             mbedtls_ssl_config_free(&ssl_conf);
-            close(fd);
-            vTaskDelete(NULL);
-            return;
+            goto client_done;
         }
         ssl_p = &ssl;
         ESP_LOGI(TAG, "TLS client handshake OK");
@@ -439,12 +442,13 @@ client_done:
         mbedtls_ssl_free(&ssl);
         mbedtls_ssl_config_free(&ssl_conf);
     }
-    for (int i = 0; i < MAX_TCP_CLIENTS; i++) {
-        if (s_client_fds[i] == fd) {
-            close_client(i);
-            break;
-        }
+    /* 按 slot 清理；fd 可能已被 gw_stop 关闭并复用给新连接，
+     * 仅当槽位仍归属本任务的 fd 时才关闭 */
+    xSemaphoreTake(s_slot_mutex, portMAX_DELAY);
+    if (slot >= 0 && slot < MAX_TCP_CLIENTS && s_client_fds[slot] == fd) {
+        close_client(slot);
     }
+    xSemaphoreGive(s_slot_mutex);
     vTaskDelete(NULL);
 }
 
@@ -540,6 +544,7 @@ static void tcp_listener_task(void *arg)
             continue;
         }
         ca->fd = client;
+        ca->slot = slot;
         ca->tls = tls;
         if (xTaskCreate(tcp_client_task, "mb_tcp_client", 8192, ca, 6,
                         &s_client_tasks[slot]) != pdPASS) {
@@ -571,18 +576,25 @@ static void gw_stop(void)
     }
     s_running = false;
 
+    /* shutdown 先于 close：lwIP 下 close 无法唤醒阻塞在 accept()/recv()
+     * 的任务，只 close 会泄漏监听/客户任务（每次 reconfigure 累积） */
     for (int i = 0; i < MAX_LISTENERS; i++) {
         if (s_listen_fds[i] >= 0) {
+            shutdown(s_listen_fds[i], SHUT_RDWR);
             close(s_listen_fds[i]);
             s_listen_fds[i] = -1;
         }
     }
+    xSemaphoreTake(s_slot_mutex, portMAX_DELAY);
     for (int i = 0; i < MAX_TCP_CLIENTS; i++) {
         if (s_client_fds[i] >= 0) {
+            shutdown(s_client_fds[i], SHUT_RDWR);
             close(s_client_fds[i]);
             s_client_fds[i] = -1;
+            s_client_tasks[i] = NULL;
         }
     }
+    xSemaphoreGive(s_slot_mutex);
     /* 唤醒 UART RX 任务 */
     if (s_uart_evt_queue) {
         uart_event_t evt = { .type = UART_FIFO_OVF };

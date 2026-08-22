@@ -33,6 +33,7 @@ static esp_netif_t *s_ap_netif = NULL;
 static wifi_mgr_state_t s_state = WIFI_MGR_STATE_UNINIT;
 static wifi_config_data_t s_cfg;             /* 当前生效配置 */
 static uint8_t s_retry_count = 0;
+static bool s_self_disconnect = false;       /* 主动断开（超时清理），不消耗重试预算 */
 static bool s_ap_on = false;
 static bool s_ap_off_after_connect = false;  /* 本次连接成功后是否关闭 AP */
 
@@ -214,8 +215,13 @@ static void on_conn_timeout(void *arg)
         wifi_mgr_enter_config_mode();
         return;
     }
-    esp_wifi_disconnect();    /* 清理挂起的连接 */
-    esp_wifi_connect();
+    /* 主动断开以清理挂起的连接；产生的 DISCONNECTED 事件不重复计数
+     * （见事件处理器中 s_self_disconnect），重试节奏由其统一驱动 */
+    s_self_disconnect = true;
+    esp_wifi_disconnect();
+    /* 看门狗：若断开事件异常丢失（驱动未真正启动等边缘场景），
+     * 保证状态机仍能周期推进直至回退配网模式；正常路径下事件处理器
+     * 的 disarm_conn_timers() 会将其解除 */
     esp_timer_start_once(s_conn_timeout_timer, CONN_TIMEOUT_MS * 1000);
 }
 
@@ -559,7 +565,11 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
             break;
         }
         disarm_conn_timers();
-        s_retry_count++;
+        if (s_self_disconnect) {
+            s_self_disconnect = false;   /* 超时清理触发的主动断开，已计数 */
+        } else {
+            s_retry_count++;
+        }
         if (s_retry_count >= CONN_RETRY_MAX) {
             ESP_LOGW(TAG, "max retries reached, enter config mode");
             wifi_mgr_enter_config_mode();

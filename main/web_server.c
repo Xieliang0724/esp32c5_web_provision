@@ -33,6 +33,14 @@ extern const uint8_t server_cert_pem_end[]   asm("_binary_server_cert_pem_end");
 static httpd_handle_t s_server = NULL;
 static bool s_scan_done = false;
 
+/* 延迟操作定时器：静态复用（懒创建），避免每次请求创建后泄漏 */
+static esp_timer_handle_t s_enter_config_timer = NULL;
+static esp_timer_handle_t s_connect_timer = NULL;
+static wifi_config_data_t s_pending_cfg;    /* 最新待应用的配网配置（新请求覆盖旧的） */
+
+static void arm_enter_config_timer(void);
+static void arm_connect_timer(void);
+
 static const char *AUTH_NAMES[] = {
     [WIFI_AUTH_OPEN]         = "OPEN",
     [WIFI_AUTH_WEP]          = "WEP",
@@ -238,14 +246,7 @@ static esp_err_t handle_disconnect_post(httpd_req_t *req)
     cJSON_Delete(ok);
 
     /* 延迟执行：等响应发出后再切换模式 */
-    esp_timer_create_args_t targs = {
-        .callback = (void (*)(void *))wifi_mgr_enter_config_mode,
-        .name = "delayed_config",
-    };
-    esp_timer_handle_t t = NULL;
-    if (esp_timer_create(&targs, &t) == ESP_OK) {
-        esp_timer_start_once(t, 300 * 1000);
-    }
+    arm_enter_config_timer();
     return ret;
 }
 
@@ -311,9 +312,46 @@ static esp_err_t handle_scan(httpd_req_t *req)
 }
 
 /* 延迟执行连接/复位，避免在 HTTP handler 内部重启 Wi-Fi/停服务器 */
-static void delayed_connect(void *arg)
+static void enter_config_cb(void *arg)
 {
-    wifi_mgr_connect((const wifi_config_data_t *)arg);
+    wifi_mgr_enter_config_mode();
+}
+
+static void connect_cb(void *arg)
+{
+    wifi_mgr_connect(&s_pending_cfg);
+}
+
+static void arm_enter_config_timer(void)
+{
+    if (!s_enter_config_timer) {
+        esp_timer_create_args_t targs = {
+            .callback = enter_config_cb,
+            .name = "delayed_config",
+        };
+        if (esp_timer_create(&targs, &s_enter_config_timer) != ESP_OK) {
+            ESP_LOGE(TAG, "create delayed_config timer failed");
+            return;
+        }
+    }
+    esp_timer_stop(s_enter_config_timer);
+    esp_timer_start_once(s_enter_config_timer, 300 * 1000);
+}
+
+static void arm_connect_timer(void)
+{
+    if (!s_connect_timer) {
+        esp_timer_create_args_t targs = {
+            .callback = connect_cb,
+            .name = "delayed_connect",
+        };
+        if (esp_timer_create(&targs, &s_connect_timer) != ESP_OK) {
+            ESP_LOGE(TAG, "create delayed_connect timer failed");
+            return;
+        }
+    }
+    esp_timer_stop(s_connect_timer);
+    esp_timer_start_once(s_connect_timer, 300 * 1000);
 }
 
 static esp_err_t handle_config_post(httpd_req_t *req)
@@ -396,19 +434,8 @@ static esp_err_t handle_config_post(httpd_req_t *req)
     cJSON_Delete(ok);
 
     /* 响应已发出，延迟 300ms 再连接（避免从 handler 内部停掉服务器） */
-    wifi_config_data_t *copy = malloc(sizeof(wifi_config_data_t));
-    if (copy) {
-        memcpy(copy, &cfg, sizeof(cfg));
-        esp_timer_create_args_t targs = {
-            .callback = delayed_connect,
-            .arg = copy,
-            .name = "delayed_connect",
-        };
-        esp_timer_handle_t t = NULL;
-        if (esp_timer_create(&targs, &t) == ESP_OK) {
-            esp_timer_start_once(t, 300 * 1000);
-        }
-    }
+    memcpy(&s_pending_cfg, &cfg, sizeof(cfg));
+    arm_connect_timer();
     return ret;
 }
 
@@ -421,14 +448,7 @@ static esp_err_t handle_reset_post(httpd_req_t *req)
     cJSON_Delete(ok);
 
     /* 延迟进入配网模式 */
-    esp_timer_create_args_t targs = {
-        .callback = (void (*)(void *))wifi_mgr_enter_config_mode,
-        .name = "delayed_reset",
-    };
-    esp_timer_handle_t t = NULL;
-    if (esp_timer_create(&targs, &t) == ESP_OK) {
-        esp_timer_start_once(t, 300 * 1000);
-    }
+    arm_enter_config_timer();
     return ret;
 }
 
