@@ -234,7 +234,7 @@ openssl req -x509 -newkey rsa:2048 -keyout server_key.pem -out server_cert.pem \
 
 ## 版本管理（git tag）
 
-当前已发布至 **v1.2.1**（v1.2.2 修复见上文详情），固件内置版本号（网页状态面板 / `/api/status` / 串口日志 `App version:` 均可查看）。
+当前已发布至 **v1.2.2**（含可靠性修复：重试计数双计/内存泄漏/任务泄漏），固件内置版本号（网页状态面板 / `/api/status` / 串口日志 `App version:` 均可查看）。
 
 **发布新版本**（改完代码后）：
 

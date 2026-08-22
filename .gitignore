@@ -9,3 +9,7 @@ dependencies.lock
 
 # TLS 私钥（绝不入库，只保留在本机用于编译）
 main/certs/server_key.pem
+
+# macOS / 编辑器
+.DS_Store
+.zcode/
