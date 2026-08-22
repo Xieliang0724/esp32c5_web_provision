@@ -87,8 +87,8 @@ idf.py -p /dev/cu.usbmodem* flash monitor      # macOS 串口设备名
 
 **首次使用（配网）：**
 
-1. 给设备上电，等待日志出现 `SoftAP ssid=ESP32C5-XXXX`
-2. 手机/电脑连接 Wi-Fi 热点 **`ESP32C5-XXXX`**（默认开放网络；如需密码见下文配置）
+1. 给设备上电，等待日志出现 `SoftAP ssid=ESP32C5-XXXXXXXX`（MAC 后缀，每台唯一）
+2. 手机/电脑连接 Wi-Fi 热点 **`ESP32C5-XXXXXXXX`**（MAC 后缀，每台设备唯一）（默认开放网络；如需密码见下文配置）
 3. 浏览器访问 **`http://192.168.4.1`**，打开配网页面
 4. 点击 **刷新** 扫描 Wi-Fi → 下拉选择你的路由器 SSID（或手动输入）
 5. 输入密码；按需选择 **静态 IP** 并填写 IP/网关等；按需勾选 **连接成功后关闭热点**
@@ -103,7 +103,7 @@ idf.py -p /dev/cu.usbmodem* flash monitor      # macOS 串口设备名
 
 | 配置 | 默认值 | 说明 |
 |---|---|---|
-| `CONFIG_PROV_AP_SSID_PREFIX` | `ESP32C5` | 热点名前缀，实际为 `<前缀>-<MAC后4位>` |
+| `CONFIG_PROV_AP_SSID_PREFIX` | `ESP32C5` | 热点名前缀，实际为 `<前缀>-<芯片MAC后N字节>`，见 `CONFIG_PROV_AP_SSID_MAC_BYTES` |
 | `CONFIG_PROV_AP_PASSWORD` | 空 | 热点密码，留空=开放网络；设置需 ≥8 位 |
 | `CONFIG_PROV_AP_CHANNEL` | 1 | 热点 2.4G 信道 |
 | `CONFIG_PROV_CONNECT_RETRY_MAX` | 5 | STA 失败重试次数，超过后回到配网模式 |
@@ -230,7 +230,7 @@ openssl req -x509 -newkey rsa:2048 -keyout server_key.pem -out server_cert.pem \
 2. **Web 内存**：`for i in $(seq 1 100); do curl -s -X POST http://<设备IP>/api/config -d '{"ssid":"x"}' >/dev/null; done` 后对比 `/api/status` 前后串口堆日志（`minimum free heap` 不应持续下降）
 3. **网关内存**：断开 RS485 从站使事务全部超时，压测数千次 Modbus 请求后堆稳定
 4. **网关重配置**：网页反复（≥10 次）修改并保存网关设置，串口无异常，新 Modbus 客户端可正常连接收发
-5. **AP 兜底（重点）**：设备联网且勾选"连接成功后关闭热点"后，关闭路由器电源等待 15 s+，确认热点以正确 SSID（`ESP32C5-XXXX`）出现且可访问 `192.168.4.1`——此为已知问题 1 的实测项
+5. **AP 兜底（重点）**：设备联网且勾选"连接成功后关闭热点"后，关闭路由器电源等待 15 s+，确认热点以正确 SSID（`ESP32C5-XXXXXXXX`）出现且可访问 `192.168.4.1`——此为已知问题 1 的实测项
 
 ## 版本管理（git tag）
 
@@ -257,7 +257,7 @@ git checkout main   # 回退完切回最新代码继续开发
 
 ## 常见问题
 
-- **连不上热点**：确认热点名是 `ESP32C5-XXXX`（日志中会打印）；若设了密码，确认密码 ≥8 位
+- **连不上热点**：确认热点名是 `ESP32C5-XXXXXXXX`（MAC 后缀，日志中会打印）；若设了密码，确认密码 ≥8 位
 - **扫描不到 5G 网络**：确认路由器 5G 开启且设备处于 5G 覆盖范围（5G 穿墙弱）
 - **配网后想换网络**：长按 BOOT 3 秒，或连接热点（若未关闭）重新配置
 - **IDF 版本兼容性**：本工程按 IDF v6.0.1 API 编写（`ESP_ERR_WIFI_CONN`、`esp_system.h`、cjson 托管组件等）；如用 v5.4/v5.5 请留意 API 差异

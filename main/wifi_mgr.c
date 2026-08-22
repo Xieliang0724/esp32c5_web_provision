@@ -158,17 +158,23 @@ static esp_err_t apply_sta_ip(const wifi_config_data_t *cfg)
     return ESP_OK;
 }
 
-/* 构造 SoftAP 配置：SSID = <前缀>-<MAC后4位> */
+/* 构造 SoftAP 配置：SSID = <前缀>-<芯片MAC后N字节>（N 可配，保证每台设备唯一） */
 static void build_ap_config(wifi_ap_config_t *ap_cfg)
 {
     memset(ap_cfg, 0, sizeof(*ap_cfg));
 
     uint8_t mac[6] = {0};
-    esp_wifi_get_mac(WIFI_IF_AP, mac);
+    esp_wifi_get_mac(WIFI_IF_STA, mac);   /* 芯片基 MAC（出厂唯一） */
 
+    int n = CONFIG_PROV_AP_SSID_MAC_BYTES;
+    if (n < 1 || n > 6) {
+        n = 4;
+    }
     char ssid[33];
-    snprintf(ssid, sizeof(ssid), "%s-%02X%02X",
-             CONFIG_PROV_AP_SSID_PREFIX, mac[4], mac[5]);
+    int len = snprintf(ssid, sizeof(ssid), "%s-", CONFIG_PROV_AP_SSID_PREFIX);
+    for (int i = 6 - n; i < 6; i++) {
+        len += snprintf(ssid + len, sizeof(ssid) - len, "%02X", mac[i]);
+    }
 
     strlcpy((char *)ap_cfg->ssid, ssid, sizeof(ap_cfg->ssid));
     strlcpy(s_ap_ssid, ssid, sizeof(s_ap_ssid));

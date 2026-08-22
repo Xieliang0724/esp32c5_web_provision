@@ -4,8 +4,17 @@ menu "Web Provisioning Configuration"
         string "SoftAP SSID prefix"
         default "ESP32C5"
         help
-            SoftAP 的 SSID 前缀，实际 SSID 为 <前缀>-<MAC后4位>，
-            例如 ESP32C5-1A2B。
+            SoftAP 的 SSID 前缀，实际 SSID 为 <前缀>-<芯片MAC后N字节>，
+            例如 ESP32C5-75885C70。
+
+    config PROV_AP_SSID_MAC_BYTES
+        int "SoftAP SSID MAC suffix bytes (1-6)"
+        default 4
+        range 1 6
+        help
+            AP 名称后缀使用 WiFi 芯片 MAC（STA 基址，出厂唯一）的末尾 N 个字节，
+            以十六进制大写显示。默认 4 字节 = 8 位十六进制（约 40 亿组合），
+            保证每台设备的 AP 名称唯一。1 字节 = 2 位十六进制（255 组合，慎用）。
 
     config PROV_AP_PASSWORD
         string "SoftAP password (empty = open AP)"

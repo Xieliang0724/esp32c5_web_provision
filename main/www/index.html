@@ -264,7 +264,9 @@
     btn.disabled = true;
     fetch('/api/disconnect', { method: 'POST' })
       .then(function () {
-        setStatus('📲 已断开 Wi-Fi，正在进入配网模式…请连接热点 ESP32C5-5C71', 'ok');
+        /* 热点名动态获取（每台设备唯一，不可硬编码） */
+        var apName = document.getElementById('apSsid').textContent;
+        setStatus('📲 已断开 Wi-Fi，正在进入配网模式…请连接热点 ' + (apName !== '-' ? apName : '（刷新页面查看热点名）'), 'ok');
       })
       .catch(function () {
         setStatus('❌ 操作失败，请重试', 'err');
