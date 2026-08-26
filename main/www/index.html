@@ -167,6 +167,7 @@
   var scanTimer = null;
   var lastState = '';
   var sawConnecting = false;   /* 是否已进入过“连接中”（用于区分报错原因） */
+  var lastApSsid = '';         /* 服务端始终下发 ap_ssid，缓存供热点关闭时提示用 */
 
   function setStatus(text, cls) {
     statusEl.textContent = text;
@@ -210,6 +211,7 @@
   function pollStatus() {
     fetch('/api/status').then(function (r) { return r.json(); }).then(function (d) {
       updateNetInfo(d);
+      if (d.ap_ssid) { lastApSsid = d.ap_ssid; }
       if (d.state === 'connected') {
         sawConnecting = false;
         setStatus('✅ 已连接：' + d.ssid + '，IP = ' + (d.ip || '获取中…') + (d.ap_on ? '（热点保持开启）' : ''), 'ok');
@@ -264,9 +266,8 @@
     btn.disabled = true;
     fetch('/api/disconnect', { method: 'POST' })
       .then(function () {
-        /* 热点名动态获取（每台设备唯一，不可硬编码） */
-        var apName = document.getElementById('apSsid').textContent;
-        setStatus('📲 已断开 Wi-Fi，正在进入配网模式…请连接热点 ' + (apName !== '-' ? apName : '（刷新页面查看热点名）'), 'ok');
+        /* 热点名取自状态轮询缓存（热点关闭时页面元素显示"-"，不可作依据） */
+        setStatus('📲 已断开 Wi-Fi，正在进入配网模式…请连接热点 ' + (lastApSsid || '（见设备标签/串口日志）'), 'ok');
       })
       .catch(function () {
         setStatus('❌ 操作失败，请重试', 'err');

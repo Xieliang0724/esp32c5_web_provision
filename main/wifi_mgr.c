@@ -172,7 +172,16 @@ static void build_ap_config(wifi_ap_config_t *ap_cfg)
     }
     char ssid[33];
     int len = snprintf(ssid, sizeof(ssid), "%s-", CONFIG_PROV_AP_SSID_PREFIX);
+    if (len < 0) {
+        len = 0;
+    }
     for (int i = 6 - n; i < 6; i++) {
+        /* 前缀过长被截断时 snprintf 返回"期望长度"（大于实际写入），
+         * 直接累加会使 len 越过缓冲区、尺寸参数下溢为巨大 size_t，造成
+         * 越界写。剩余空间不足 2 字符即停止拼接。 */
+        if (len + 2 >= (int)sizeof(ssid)) {
+            break;
+        }
         len += snprintf(ssid + len, sizeof(ssid) - len, "%02X", mac[i]);
     }
 
@@ -354,6 +363,7 @@ void wifi_mgr_enter_config_mode(void)
 {
     set_state(WIFI_MGR_STATE_CONFIG);
     s_retry_count = 0;
+    s_self_disconnect = false;   /* 清理滞留标志，避免影响下一轮计数 */
     s_ap_clients = 0;
     disarm_conn_timers();
     s_scanning = false;
@@ -376,6 +386,7 @@ void wifi_mgr_connect(const wifi_config_data_t *cfg)
     memcpy(&s_cfg, cfg, sizeof(s_cfg));
     s_ap_off_after_connect = cfg->ap_off;
     s_retry_count = 0;
+    s_self_disconnect = false;   /* 新连接周期，作废旧的自断开标志 */
     s_scanning = false;
     disarm_conn_timers();
 
@@ -648,6 +659,7 @@ static void ip_event_handler(void *arg, esp_event_base_t base, int32_t id, void 
         esp_timer_stop(s_ap_fallback_timer);   /* 已重连，取消 AP 兜底 */
         set_state(WIFI_MGR_STATE_CONNECTED);
         s_retry_count = 0;   /* 联网成功，重置重试预算 */
+        s_self_disconnect = false;
         update_led();   /* 绿色：联网成功 */
 
         /* 按配置关闭 SoftAP */

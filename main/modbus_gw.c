@@ -522,6 +522,13 @@ static void tcp_listener_task(void *arg)
         }
 
         xSemaphoreTake(s_slot_mutex, portMAX_DELAY);
+        if (!s_running) {
+            /* gw_stop 已在持锁清理槽位：此连接作废，避免停止后
+             * 反把新 fd 写入数组、占用新实例的槽位 */
+            xSemaphoreGive(s_slot_mutex);
+            close(client);
+            break;
+        }
         int slot = find_free_client_slot();
         if (slot >= 0) {
             s_client_fds[slot] = client;
