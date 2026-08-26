@@ -120,6 +120,12 @@
   <details id="advSettings" style="margin-top:20px;">
     <summary style="cursor:pointer;font-weight:600;color:#4f46e5;padding:8px 0;">⚙️ 高级设置（Modbus RTU↔TCP 网关）</summary>
     <div style="margin-top:8px;">
+      <div id="gwLock" style="padding:10px 0;">
+        <label for="gwPassword">高级设置密码</label>
+        <input type="password" id="gwPassword" placeholder="请输入密码" autocomplete="off">
+        <button type="button" id="btnGwUnlock" class="secondary">解锁高级设置</button>
+      </div>
+      <div id="gwFields" style="display:none;">
       <label class="radio"><input type="checkbox" id="gwEnabled"> 启用 Modbus 网关（ESP32 作为 TCP 服务端）</label>
 
       <label for="gwPort">本地 TCP 端口</label>
@@ -154,6 +160,7 @@
 
       <button type="button" id="btnGwSave" class="secondary">保存网关设置</button>
       <div id="gwStatus" class="hint"></div>
+      </div>
     </div>
   </details>
 </div>
@@ -374,9 +381,16 @@
 
   /* ---- 高级设置：Modbus 网关 ---- */
   var gwStatus = document.getElementById('gwStatus');
+  var gwPassword = '';
+  var gwUnlocked = false;
 
   function loadGwConfig() {
-    fetch('/api/gw').then(function (r) { return r.json(); }).then(function (d) {
+    fetch('/api/gw', {
+      headers: { 'X-Advanced-Password': gwPassword }
+    }).then(function (r) {
+      if (r.status === 401) { throw new Error('密码错误或未解锁'); }
+      return r.json();
+    }).then(function (d) {
       document.getElementById('gwEnabled').checked = !!d.enabled;
       document.getElementById('gwPort').value = d.port || 502;
       document.getElementById('gwIp').value = d.client_ip || '';
@@ -390,7 +404,41 @@
     });
   }
 
+  document.getElementById('btnGwUnlock').addEventListener('click', function () {
+    var input = document.getElementById('gwPassword');
+    if (!input.value) {
+      gwStatus.textContent = '❌ 请输入高级设置密码';
+      return;
+    }
+    gwPassword = input.value;
+    fetch('/api/gw', { headers: { 'X-Advanced-Password': gwPassword } }).then(function (r) {
+      if (!r.ok) { throw new Error('密码错误'); }
+      return r.json();
+    }).then(function (d) {
+      document.getElementById('gwEnabled').checked = !!d.enabled;
+      document.getElementById('gwPort').value = d.port || 502;
+      document.getElementById('gwIp').value = d.client_ip || '';
+      document.getElementById('gwBaud').value = String(d.baud || 9600);
+      document.getElementById('gwTx').value = d.tx;
+      document.getElementById('gwRx').value = d.rx;
+      document.getElementById('gwTls').checked = !!d.tls_enabled;
+      document.getElementById('gwTlsPort').value = d.tls_port || 802;
+      gwUnlocked = true;
+      document.getElementById('gwLock').style.display = 'none';
+      document.getElementById('gwFields').style.display = 'block';
+      gwStatus.textContent = '✅ 高级设置已解锁';
+    }).catch(function () {
+      gwPassword = '';
+      gwUnlocked = false;
+      gwStatus.textContent = '❌ 密码错误';
+    });
+  });
+
   document.getElementById('btnGwSave').addEventListener('click', function () {
+    if (!gwUnlocked) {
+      gwStatus.textContent = '❌ 请先解锁高级设置';
+      return;
+    }
     var body = {
       enabled: document.getElementById('gwEnabled').checked,
       port: parseInt(document.getElementById('gwPort').value, 10) || 502,
@@ -414,7 +462,10 @@
     gwStatus.textContent = '⏳ 保存中…';
     fetch('/api/gw', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Advanced-Password': gwPassword
+      },
       body: JSON.stringify(body)
     }).then(function (r) {
       if (!r.ok) { throw new Error('HTTP ' + r.status); }
@@ -432,7 +483,6 @@
     });
   });
 
-  loadGwConfig();
   startScan();
 })();
 </script>

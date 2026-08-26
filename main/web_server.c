@@ -29,6 +29,8 @@ extern const uint8_t server_cert_pem_end[]   asm("_binary_server_cert_pem_end");
 
 #define MAX_POST_BODY 1024
 #define SCAN_LIST_MAX 30
+#define ADVANCED_PASSWORD "geekplus"
+#define ADVANCED_PASSWORD_HEADER "X-Advanced-Password"
 
 static httpd_handle_t s_server = NULL;
 static bool s_scan_done = false;
@@ -456,8 +458,26 @@ static esp_err_t handle_reset_post(httpd_req_t *req)
 /* Modbus 网关配置接口                                                  */
 /* ------------------------------------------------------------------ */
 
+static bool advanced_password_ok(httpd_req_t *req)
+{
+    char password[sizeof(ADVANCED_PASSWORD)] = {0};
+    size_t len = httpd_req_get_hdr_value_len(req, ADVANCED_PASSWORD_HEADER);
+    if (len != strlen(ADVANCED_PASSWORD) || len >= sizeof(password)) {
+        return false;
+    }
+    if (httpd_req_get_hdr_value_str(req, ADVANCED_PASSWORD_HEADER, password, sizeof(password)) != ESP_OK) {
+        return false;
+    }
+    return strcmp(password, ADVANCED_PASSWORD) == 0;
+}
+
 static esp_err_t handle_gw_get(httpd_req_t *req)
 {
+    if (!advanced_password_ok(req)) {
+        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "advanced settings password required");
+        return ESP_FAIL;
+    }
+
     gw_config_t cfg;
     gw_config_load(&cfg);
 
@@ -482,6 +502,11 @@ static bool valid_gpio(int g)
 
 static esp_err_t handle_gw_post(httpd_req_t *req)
 {
+    if (!advanced_password_ok(req)) {
+        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "advanced settings password required");
+        return ESP_FAIL;
+    }
+
     char buf[MAX_POST_BODY];
     esp_err_t ret = recv_body(req, buf, sizeof(buf));
     if (ret != ESP_OK) {

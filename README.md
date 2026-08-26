@@ -234,14 +234,14 @@ openssl req -x509 -newkey rsa:2048 -keyout server_key.pem -out server_cert.pem \
 
 ## 版本管理（git tag）
 
-当前已发布至 **v1.2.4**（含网关停止竞态、AP 名称拼接越界、Wi-Fi 自断开标志残留及配网页面热点提示修复），固件内置版本号（网页状态面板 / `/api/status` / 串口日志 `App version:` 均可查看）。
+当前已发布至 **v1.2.5**（新增 Modbus 网关高级参数固定密码保护，密码为 `geekplus`；同时包含 v1.2.4 的网关停止竞态、AP 名称拼接越界、Wi-Fi 自断开标志残留及配网页面热点提示修复），固件内置版本号（网页状态面板 / `/api/status` / 串口日志 `App version:` 均可查看）。
 
 **发布新版本**（改完代码后）：
 
 ```bash
 git add -A
-git commit -m "v1.2.4: 修复网关停止竞态和 Wi-Fi 状态清理"
-git tag -a v1.2.4 -m "v1.2.4"
+git commit -m "v1.2.5: 增加高级网关参数密码保护"
+git tag -a v1.2.5 -m "v1.2.5"
 idf.py build && idf.py -p /dev/cu.usbserial-5C310834821 flash
 ```
 
