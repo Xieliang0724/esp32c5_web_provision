@@ -206,7 +206,9 @@ static void build_ap_config(wifi_ap_config_t *ap_cfg)
 static void build_sta_config(const wifi_config_data_t *cfg, wifi_sta_config_t *sta_cfg)
 {
     memset(sta_cfg, 0, sizeof(*sta_cfg));
-    strlcpy((char *)sta_cfg->ssid, cfg->ssid, sizeof(sta_cfg->ssid));
+    size_t ssid_len = strlen(cfg->ssid);
+    memcpy(sta_cfg->ssid, cfg->ssid, ssid_len);
+    sta_cfg->ssid_len = ssid_len;
     if (cfg->password[0]) {
         strlcpy((char *)sta_cfg->password, cfg->password, sizeof(sta_cfg->password));
     }
@@ -457,6 +459,9 @@ esp_err_t wifi_mgr_ap_enable(void)
     if (s_ap_on) {
         return ESP_OK;
     }
+    /* 用户手动开启 AP，清除"连接成功后自动关闭"标志，
+     * 避免下次 STA 重连时又把 AP 关掉。 */
+    s_ap_off_after_connect = false;
     wifi_ap_config_t ap_cfg;
     build_ap_config(&ap_cfg);
 

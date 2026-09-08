@@ -690,14 +690,22 @@ static esp_err_t gw_start(const gw_config_t *cfg)
 
     s_running = true;
 
-    xTaskCreate(uart_rx_task, "mb_uart_rx", 4096, NULL, 7, &s_uart_rx_task);
+    if (xTaskCreate(uart_rx_task, "mb_uart_rx", 4096, NULL, 7, &s_uart_rx_task) != pdPASS) {
+        ESP_LOGE(TAG, "failed to create UART RX task");
+        goto start_fail;
+    }
 
     listener_arg_t *la = malloc(sizeof(listener_arg_t));
     if (la) {
         la->port = s_cfg.port;
         la->tls = false;
         la->idx = 0;
-        xTaskCreate(tcp_listener_task, "mb_tcp_listen", 4096, la, 5, &s_listener_tasks[0]);
+        if (xTaskCreate(tcp_listener_task, "mb_tcp_listen", 4096, la, 5,
+                        &s_listener_tasks[0]) != pdPASS) {
+            free(la);
+            ESP_LOGE(TAG, "failed to create TCP listener task");
+            goto start_fail;
+        }
     }
     if (s_cfg.tls_enabled && s_tls_ready) {
         listener_arg_t *la2 = malloc(sizeof(listener_arg_t));
@@ -705,7 +713,12 @@ static esp_err_t gw_start(const gw_config_t *cfg)
             la2->port = s_cfg.tls_port;
             la2->tls = true;
             la2->idx = 1;
-            xTaskCreate(tcp_listener_task, "mb_tls_listen", 4096, la2, 5, &s_listener_tasks[1]);
+            if (xTaskCreate(tcp_listener_task, "mb_tls_listen", 4096, la2, 5,
+                            &s_listener_tasks[1]) != pdPASS) {
+                free(la2);
+                ESP_LOGE(TAG, "failed to create TLS listener task");
+                goto start_fail;
+            }
         }
     }
     ESP_LOGI(TAG, "gateway started (port %u%s, allowlist=%s)",
@@ -715,6 +728,10 @@ static esp_err_t gw_start(const gw_config_t *cfg)
         ESP_LOGI(TAG, "TLS port %u", s_cfg.tls_port);
     }
     return ESP_OK;
+
+start_fail:
+    gw_stop();
+    return ESP_ERR_NO_MEM;
 }
 
 void modbus_gw_init(void)
