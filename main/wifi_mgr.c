@@ -41,7 +41,6 @@ static esp_timer_handle_t s_conn_timeout_timer = NULL;
 static esp_timer_handle_t s_conn_retry_timer = NULL;
 static esp_timer_handle_t s_ap_fallback_timer = NULL;   /* STA 断开延迟后开启 AP 兜底 */
 
-static wifi_mgr_ap_cb_t s_ap_cb = NULL;
 static bool s_scanning = false;
 static uint16_t s_scan_max_aps = SCAN_MAX_APS;
 static wifi_mgr_scan_done_cb_t s_scan_done_cb = NULL;
@@ -206,7 +205,9 @@ static void build_ap_config(wifi_ap_config_t *ap_cfg)
 static void build_sta_config(const wifi_config_data_t *cfg, wifi_sta_config_t *sta_cfg)
 {
     memset(sta_cfg, 0, sizeof(*sta_cfg));
-    strlcpy((char *)sta_cfg->ssid, cfg->ssid, sizeof(sta_cfg->ssid));
+    size_t ssid_len = strlen(cfg->ssid);
+    memcpy(sta_cfg->ssid, cfg->ssid, ssid_len);
+    sta_cfg->ssid_len = ssid_len;
     if (cfg->password[0]) {
         strlcpy((char *)sta_cfg->password, cfg->password, sizeof(sta_cfg->password));
     }
@@ -333,20 +334,24 @@ esp_err_t wifi_mgr_init(void)
         .callback = on_conn_timeout,
         .name = "conn_timeout",
     };
-    esp_timer_create(&targs, &s_conn_timeout_timer);
+    esp_err_t timer_ret = esp_timer_create(&targs, &s_conn_timeout_timer);
+    if (timer_ret != ESP_OK) {
+        ESP_LOGE(TAG, "create conn_timeout timer failed: %s", esp_err_to_name(timer_ret));
+    }
     targs.callback = on_conn_retry;
     targs.name = "conn_retry";
-    esp_timer_create(&targs, &s_conn_retry_timer);
+    timer_ret = esp_timer_create(&targs, &s_conn_retry_timer);
+    if (timer_ret != ESP_OK) {
+        ESP_LOGE(TAG, "create conn_retry timer failed: %s", esp_err_to_name(timer_ret));
+    }
     targs.callback = on_ap_fallback_timeout;
     targs.name = "ap_fallback";
-    esp_timer_create(&targs, &s_ap_fallback_timer);
+    timer_ret = esp_timer_create(&targs, &s_ap_fallback_timer);
+    if (timer_ret != ESP_OK) {
+        ESP_LOGE(TAG, "create ap_fallback timer failed: %s", esp_err_to_name(timer_ret));
+    }
 
     return ESP_OK;
-}
-
-void wifi_mgr_set_ap_cb(wifi_mgr_ap_cb_t cb)
-{
-    s_ap_cb = cb;
 }
 
 void wifi_mgr_start(void)
@@ -372,7 +377,6 @@ void wifi_mgr_enter_config_mode(void)
     wifi_ap_config_t ap_cfg;
     build_ap_config(&ap_cfg);
     apply_wifi_mode(WIFI_MODE_APSTA, &ap_cfg, NULL);
-    /* AP_START 事件里会回调 s_ap_cb(true) 启动 Web 服务器 */
 }
 
 void wifi_mgr_connect(const wifi_config_data_t *cfg)
@@ -457,6 +461,9 @@ esp_err_t wifi_mgr_ap_enable(void)
     if (s_ap_on) {
         return ESP_OK;
     }
+    /* 用户手动开启 AP，清除"连接成功后自动关闭"标志，
+     * 避免下次 STA 重连时又把 AP 关掉。 */
+    s_ap_off_after_connect = false;
     wifi_ap_config_t ap_cfg;
     build_ap_config(&ap_cfg);
 
@@ -621,17 +628,11 @@ static void wifi_event_handler(void *arg, esp_event_base_t base, int32_t id, voi
     case WIFI_EVENT_AP_START:
         s_ap_on = true;
         ESP_LOGI(TAG, "SoftAP started");
-        if (s_ap_cb) {
-            s_ap_cb(true);
-        }
         break;
 
     case WIFI_EVENT_AP_STOP:
         s_ap_on = false;
         ESP_LOGI(TAG, "SoftAP stopped");
-        if (s_ap_cb) {
-            s_ap_cb(false);
-        }
         break;
 
     case WIFI_EVENT_SCAN_DONE:
@@ -668,7 +669,6 @@ static void ip_event_handler(void *arg, esp_event_base_t base, int32_t id, void 
             wifi_config_t empty_cfg = {0};   /* AP ssid 为空 -> AP 不启动 */
             esp_wifi_set_config(WIFI_IF_AP, &empty_cfg);
             esp_wifi_set_mode(WIFI_MODE_STA);
-            /* AP_STOP 事件触发 s_ap_cb(false) */
         }
         break;
     }

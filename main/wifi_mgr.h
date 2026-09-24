@@ -25,10 +25,6 @@ typedef enum {
     WIFI_MGR_STATE_CONNECTED,  /* STA 已连接（获得 IP） */
 } wifi_mgr_state_t;
 
-/* SoftAP 开关回调：ap_on=true 表示 AP 已启动，false 表示已停止。
- * 用于外部模块（如 Web 服务器）跟随 AP 生命周期启停。 */
-typedef void (*wifi_mgr_ap_cb_t)(bool ap_on);
-
 /* 扫描完成回调 */
 typedef void (*wifi_mgr_scan_done_cb_t)(void);
 
@@ -62,8 +58,6 @@ esp_err_t wifi_mgr_scan_async(uint16_t max_aps, wifi_mgr_scan_done_cb_t cb);
 
 /* 获取扫描结果；调用者负责 free(records) */
 esp_err_t wifi_mgr_scan_get_results(wifi_ap_record_t **records, uint16_t *count);
-
-void wifi_mgr_set_ap_cb(wifi_mgr_ap_cb_t cb);
 
 /* 将信道号映射为频段字符串（"2.4G"/"5G"） */
 const char *wifi_mgr_band_of_channel(uint8_t channel);
