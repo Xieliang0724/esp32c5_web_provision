@@ -2,10 +2,10 @@ menu "Web Provisioning Configuration"
 
     config PROV_AP_SSID_PREFIX
         string "SoftAP SSID prefix"
-        default "ESP32C5"
+        default "Safehalt"
         help
-            SoftAP 的 SSID 前缀，实际 SSID 为 <前缀>-<芯片MAC后N字节>，
-            例如 ESP32C5-75885C70。
+            SoftAP 的 SSID 前缀，实际 SSID 为 <前缀>_<芯片MAC后N字节>，
+            例如 Safehalt_75885C70。
 
     config PROV_AP_SSID_MAC_BYTES
         int "SoftAP SSID MAC suffix bytes (1-6)"

@@ -158,7 +158,7 @@ static esp_err_t apply_sta_ip(const wifi_config_data_t *cfg)
     return ESP_OK;
 }
 
-/* 构造 SoftAP 配置：SSID = <前缀>-<芯片MAC后N字节>（N 可配，保证每台设备唯一） */
+/* 构造 SoftAP 配置：SSID = <前缀>_<芯片MAC后N字节>（N 可配，保证每台设备唯一） */
 static void build_ap_config(wifi_ap_config_t *ap_cfg)
 {
     memset(ap_cfg, 0, sizeof(*ap_cfg));
@@ -171,7 +171,7 @@ static void build_ap_config(wifi_ap_config_t *ap_cfg)
         n = 4;
     }
     char ssid[33];
-    int len = snprintf(ssid, sizeof(ssid), "%s-", CONFIG_PROV_AP_SSID_PREFIX);
+    int len = snprintf(ssid, sizeof(ssid), "%s_", CONFIG_PROV_AP_SSID_PREFIX);
     if (len < 0) {
         len = 0;
     }

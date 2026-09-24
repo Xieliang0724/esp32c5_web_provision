@@ -1,5 +1,13 @@
 # Changelog
 
+## [v1.2.6] - 2026-08-26
+
+### ✨ 新增：SoftAP 名称改为 `Safehalt_<MAC后8位>`
+
+- SoftAP 前缀默认值由 `ESP32C5` 改为 `Safehalt`，分隔符由 `-` 改为 `_`。
+- 实际 AP 名称变为 `Safehalt_XXXXXXXX`（如 `Safehalt_75885C70`），仍基于芯片 MAC 保证每台唯一。
+- 可通过 `CONFIG_PROV_AP_SSID_PREFIX` 在 menuconfig / `sdkconfig.defaults` 中再次修改。
+
 ## [v1.2.5] - 2026-08-26
 
 ### 🔒 新增：高级网关参数密码保护
