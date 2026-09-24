@@ -1,7 +1,17 @@
 {
-    // 本文件仅作用于当前项目文件夹，不影响 VS Code 全局设置。
-    // 钉住 IDF v6.0.1 路径，确保 ESP-IDF 扩展使用正确的工具链。
-    "idf.espIdfPath": "/Users/alvin.xie/.espressif/v6.0.1/esp-idf",
-    "idf.toolsPath": "/Users/alvin.xie/.espressif",
-    "idf.flashType": "UART"
+    "idf.espIdfPathWin": "E:\\Users\\Administrator\\esp\\v6.0.2\\esp-idf",
+    "idf.toolsPathWin": "E:\\Users\\Administrator\\.espressif",
+    "idf.pythonInstallPath": "E:\\Users\\Administrator\\.espressif\\tools\\idf-python\\3.11.2\\python.exe",
+    "idf.flashType": "UART",
+    "idf.portWin": "COM12",
+    "idf.monitorPort": "COM12",
+    "idf.flashBaudRate": "115200",
+    "idf.monitorBaudRate": "115200",
+    "idf.buildPathWin": "${workspaceFolder}\\build",
+    "idf.cmakeCompilerArgs": [
+        "-G",
+        "Ninja",
+        "-DPYTHON_DEPS_CHECKED=1",
+        "-DESP_PLATFORM=1"
+    ]
 }

@@ -1,0 +1,18 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "ESP-IDF Flash COM12",
+            "type": "shell",
+            "command": "cmd.exe",
+            "args": [
+                "/c",
+                "set IDF_TOOLS_PATH=E:\\Users\\Administrator\\.espressif&& set IDF_PYTHON_ENV_PATH=E:\\Users\\Administrator\\.espressif\\python_env\\idf6.0_py3.11_env&& call E:\\Users\\Administrator\\esp\\v6.0.2\\esp-idf\\export.bat && idf.py -p COM12 -b 115200 flash"
+            ],
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "problemMatcher": []
+        }
+    ]
+}

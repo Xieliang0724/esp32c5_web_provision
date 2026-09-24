@@ -205,9 +205,7 @@ static void build_ap_config(wifi_ap_config_t *ap_cfg)
 static void build_sta_config(const wifi_config_data_t *cfg, wifi_sta_config_t *sta_cfg)
 {
     memset(sta_cfg, 0, sizeof(*sta_cfg));
-    size_t ssid_len = strlen(cfg->ssid);
-    memcpy(sta_cfg->ssid, cfg->ssid, ssid_len);
-    sta_cfg->ssid_len = ssid_len;
+    strlcpy((char *)sta_cfg->ssid, cfg->ssid, sizeof(sta_cfg->ssid));
     if (cfg->password[0]) {
         strlcpy((char *)sta_cfg->password, cfg->password, sizeof(sta_cfg->password));
     }

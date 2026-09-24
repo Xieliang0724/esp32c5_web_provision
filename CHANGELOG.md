@@ -1,5 +1,19 @@
 # Changelog
 
+## [v1.2.7] - 2026-08-26
+
+### ✨ 配网页面标题更新
+
+- 内嵌配网页面的浏览器标题与主标题改为 `Safe_Halt 无线网络配置`。
+
+### 🔧 修复
+
+- **修正合并引入的编译错误**：远程补丁在 `build_sta_config` 中引用了当前 ESP-IDF v6.0.2 不存在的 `wifi_sta_config_t.ssid_len` 字段及无终止符的 `memcpy`，导致编译失败。改回与本工程一致的 `strlcpy`（保证 null 终止、完整复制 SSID）。
+
+### 🛠 开发工具
+
+- 新增 `tools/serial_read_win.py`：Windows 下读取 COM 串口日志的辅助脚本（输出到 `tools/log_capture.txt`）。
+
 ## [v1.2.6] - 2026-08-26
 
 ### ✨ 新增：SoftAP 名称改为 `Safehalt_<MAC后8位>`
