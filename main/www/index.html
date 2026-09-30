@@ -160,6 +160,15 @@
 
       <button type="button" id="btnGwSave" class="secondary">保存网关设置</button>
       <div id="gwStatus" class="hint"></div>
+
+      <label style="margin-top:20px;">固件升级 (OTA)</label>
+      <input type="file" id="otaFile" accept=".bin">
+      <button type="button" id="btnOtaUpload" class="secondary">上传并升级固件</button>
+      <div id="otaProgressWrap" style="display:none;margin-top:8px;background:#e5e7eb;border-radius:6px;overflow:hidden;height:8px;">
+        <div id="otaProgressBar" style="width:0%;height:100%;background:#4f46e5;"></div>
+      </div>
+      <div id="otaStatus" class="hint"></div>
+      <div class="hint">⚠️ 升级过程中请勿断电；上传完成后设备会自动重启，页面将自动重连</div>
       </div>
     </div>
   </details>
@@ -481,6 +490,60 @@
       gwStatus.textContent = '❌ 保存失败：' + e.message;
       btn.disabled = false;
     });
+  });
+
+  /* ---- 固件升级 (OTA) ---- */
+  var otaStatus = document.getElementById('otaStatus');
+  var otaProgressWrap = document.getElementById('otaProgressWrap');
+  var otaProgressBar = document.getElementById('otaProgressBar');
+
+  document.getElementById('btnOtaUpload').addEventListener('click', function () {
+    if (!gwUnlocked) {
+      otaStatus.textContent = '❌ 请先解锁高级设置';
+      return;
+    }
+    var fileInput = document.getElementById('otaFile');
+    var file = fileInput.files[0];
+    if (!file) {
+      otaStatus.textContent = '❌ 请先选择固件文件 (.bin)';
+      return;
+    }
+    if (!confirm('升级过程中设备会重启，请确认固件文件正确且网络稳定，是否继续？')) {
+      return;
+    }
+
+    var btn = this;
+    btn.disabled = true;
+    otaProgressWrap.style.display = 'block';
+    otaProgressBar.style.width = '0%';
+    otaStatus.textContent = '⏳ 上传中… 0%';
+
+    var xhr = new XMLHttpRequest();
+    xhr.open('POST', '/api/ota', true);
+    xhr.setRequestHeader('Content-Type', 'application/octet-stream');
+    xhr.setRequestHeader('X-Advanced-Password', gwPassword);
+    xhr.upload.onprogress = function (e) {
+      if (e.lengthComputable) {
+        var pct = Math.round((e.loaded / e.total) * 100);
+        otaProgressBar.style.width = pct + '%';
+        otaStatus.textContent = '⏳ 上传中… ' + pct + '%';
+      }
+    };
+    xhr.onload = function () {
+      var d = {};
+      try { d = JSON.parse(xhr.responseText); } catch (e) {}
+      if (xhr.status === 200 && d.status === 'ok') {
+        otaStatus.textContent = '✅ 升级成功，设备正在重启…';
+      } else {
+        otaStatus.textContent = '❌ 升级失败：' + (d.msg || ('HTTP ' + xhr.status));
+        btn.disabled = false;
+      }
+    };
+    xhr.onerror = function () {
+      otaStatus.textContent = '❌ 上传失败，请检查网络';
+      btn.disabled = false;
+    };
+    xhr.send(file);
   });
 
   startScan();

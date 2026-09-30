@@ -7,6 +7,7 @@
 #include "esp_log.h"
 #include "esp_http_server.h"
 #include "esp_netif.h"
+#include "esp_ota_ops.h"
 #include "esp_timer.h"
 #include "esp_wifi.h"
 #include "esp_app_desc.h"
@@ -38,10 +39,12 @@ static bool s_scan_done = false;
 /* 延迟操作定时器：静态复用（懒创建），避免每次请求创建后泄漏 */
 static esp_timer_handle_t s_enter_config_timer = NULL;
 static esp_timer_handle_t s_connect_timer = NULL;
+static esp_timer_handle_t s_restart_timer = NULL;
 static wifi_config_data_t s_pending_cfg;    /* 最新待应用的配网配置（新请求覆盖旧的） */
 
 static void arm_enter_config_timer(void);
 static void arm_connect_timer(void);
+static void arm_restart_timer(void);
 
 static const char *AUTH_NAMES[] = {
     [WIFI_AUTH_OPEN]         = "OPEN",
@@ -324,6 +327,11 @@ static void connect_cb(void *arg)
     wifi_mgr_connect(&s_pending_cfg);
 }
 
+static void restart_cb(void *arg)
+{
+    esp_restart();
+}
+
 static void arm_enter_config_timer(void)
 {
     if (!s_enter_config_timer) {
@@ -354,6 +362,22 @@ static void arm_connect_timer(void)
     }
     esp_timer_stop(s_connect_timer);
     esp_timer_start_once(s_connect_timer, 300 * 1000);
+}
+
+static void arm_restart_timer(void)
+{
+    if (!s_restart_timer) {
+        esp_timer_create_args_t targs = {
+            .callback = restart_cb,
+            .name = "delayed_restart",
+        };
+        if (esp_timer_create(&targs, &s_restart_timer) != ESP_OK) {
+            ESP_LOGE(TAG, "create delayed_restart timer failed");
+            return;
+        }
+    }
+    esp_timer_stop(s_restart_timer);
+    esp_timer_start_once(s_restart_timer, 300 * 1000);
 }
 
 static esp_err_t handle_config_post(httpd_req_t *req)
@@ -592,6 +616,106 @@ static esp_err_t handle_gw_post(httpd_req_t *req)
 }
 
 /* ------------------------------------------------------------------ */
+/* OTA 固件升级（网页手动上传 .bin）                                      */
+/* ------------------------------------------------------------------ */
+
+#define OTA_RECV_BUF_SIZE 4096
+
+static esp_err_t send_json_status_msg(httpd_req_t *req, const char *status, const char *msg)
+{
+    cJSON *obj = cJSON_CreateObject();
+    cJSON_AddStringToObject(obj, "status", status);
+    if (msg) {
+        cJSON_AddStringToObject(obj, "msg", msg);
+    }
+    esp_err_t ret = send_json_obj(req, obj);
+    cJSON_Delete(obj);
+    return ret;
+}
+
+static esp_err_t handle_ota_post(httpd_req_t *req)
+{
+    if (!advanced_password_ok(req)) {
+        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "advanced settings password required");
+        return ESP_FAIL;
+    }
+
+    if (req->content_len == 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty body");
+        return ESP_FAIL;
+    }
+
+    const esp_partition_t *update_partition = esp_ota_get_next_update_partition(NULL);
+    if (!update_partition) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no OTA partition available");
+        return ESP_FAIL;
+    }
+    if (req->content_len > update_partition->size) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "firmware too large for OTA partition");
+        return ESP_FAIL;
+    }
+
+    esp_ota_handle_t ota_handle;
+    esp_err_t ret = esp_ota_begin(update_partition, req->content_len, &ota_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_begin failed: %s", esp_err_to_name(ret));
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "ota begin failed");
+        return ret;
+    }
+
+    char *buf = malloc(OTA_RECV_BUF_SIZE);
+    if (!buf) {
+        esp_ota_abort(ota_handle);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no memory");
+        return ESP_ERR_NO_MEM;
+    }
+
+    int remaining = req->content_len;
+    bool write_failed = false;
+    while (remaining > 0) {
+        int to_read = remaining < OTA_RECV_BUF_SIZE ? remaining : OTA_RECV_BUF_SIZE;
+        int r = httpd_req_recv(req, buf, to_read);
+        if (r <= 0) {
+            if (r == HTTPD_SOCK_ERR_TIMEOUT) {
+                continue;
+            }
+            write_failed = true;
+            break;
+        }
+        if (esp_ota_write(ota_handle, buf, r) != ESP_OK) {
+            write_failed = true;
+            break;
+        }
+        remaining -= r;
+    }
+    free(buf);
+
+    if (write_failed) {
+        esp_ota_abort(ota_handle);
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "upload interrupted");
+        return ESP_FAIL;
+    }
+
+    ret = esp_ota_end(ota_handle);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_end failed: %s", esp_err_to_name(ret));
+        return send_json_status_msg(req, "error",
+            ret == ESP_ERR_OTA_VALIDATE_FAILED ? "固件校验失败，镜像损坏或不匹配" : esp_err_to_name(ret));
+    }
+
+    ret = esp_ota_set_boot_partition(update_partition);
+    if (ret != ESP_OK) {
+        ESP_LOGE(TAG, "esp_ota_set_boot_partition failed: %s", esp_err_to_name(ret));
+        return send_json_status_msg(req, "error", esp_err_to_name(ret));
+    }
+
+    ESP_LOGW(TAG, "OTA update staged, restarting...");
+    esp_err_t sret = send_json_status_msg(req, "ok", NULL);
+    arm_restart_timer();   /* 响应发出后再重启 */
+    return sret;
+}
+
+/* ------------------------------------------------------------------ */
 /* 服务器生命周期                                                       */
 /* ------------------------------------------------------------------ */
 
@@ -602,7 +726,8 @@ static esp_err_t start_httpd(void)
     }
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.lru_purge_enable = true;
-    cfg.max_uri_handlers = 10;
+    cfg.max_uri_handlers = 12;
+    cfg.stack_size = 8192;
     return httpd_start(&s_server, &cfg);
 }
 
@@ -619,6 +744,7 @@ static esp_err_t register_handlers(httpd_handle_t server)
         { .uri = "/api/gw",       .method = HTTP_POST, .handler = handle_gw_post },
         { .uri = "/api/ap",       .method = HTTP_POST, .handler = handle_ap_post },
         { .uri = "/api/disconnect", .method = HTTP_POST, .handler = handle_disconnect_post },
+        { .uri = "/api/ota",      .method = HTTP_POST, .handler = handle_ota_post },
     };
     for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {
         esp_err_t ret = httpd_register_uri_handler(server, &uris[i]);

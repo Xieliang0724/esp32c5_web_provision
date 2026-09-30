@@ -24,6 +24,7 @@ idf_component_register(
         esp_driver_uart
         esp_system
         esp_app_format
+        app_update
         led_strip
         lwip
         mdns

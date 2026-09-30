@@ -264,14 +264,18 @@ static void on_ap_fallback_timeout(void *arg)
     wifi_mgr_ap_enable();
 }
 
-/* 在 STA 断开且 AP 关闭时，延迟开启 AP 兜底（短暂抖动不触发） */
+/* 在 STA 断开且 AP 关闭时，延迟开启 AP 兜底（短暂抖动不触发）。
+ * 幂等：若倒计时已在跑则不重新起算，否则每次重试失败产生的断线事件
+ * 都会把倒计时拉回满值，导致永远凑不满阈值、兜底实质失效。 */
 static void arm_ap_fallback(void)
 {
+    if (esp_timer_is_active(s_ap_fallback_timer)) {
+        return;
+    }
     uint32_t delay_s = s_cfg.ap_fallback_delay;
     if (delay_s == 0) {
         delay_s = 15;   /* 缺省 15 秒 */
     }
-    esp_timer_stop(s_ap_fallback_timer);
     esp_timer_start_once(s_ap_fallback_timer, delay_s * 1000000ULL);
 }
 
@@ -281,11 +285,12 @@ static void arm_retry_timer(void)
     esp_timer_start_once(s_conn_retry_timer, CONN_RETRY_DELAY_MS * 1000);
 }
 
+/* 仅停连接超时/重试定时器；ap_fallback 定时器代表"连续断开时长"，
+ * 必须跨多次断线-重试周期持续计时，由调用方在开启新连接周期时单独停止 */
 static void disarm_conn_timers(void)
 {
     esp_timer_stop(s_conn_timeout_timer);
     esp_timer_stop(s_conn_retry_timer);
-    esp_timer_stop(s_ap_fallback_timer);
 }
 
 /* ------------------------------------------------------------------ */
@@ -369,6 +374,7 @@ void wifi_mgr_enter_config_mode(void)
     s_self_disconnect = false;   /* 清理滞留标志，避免影响下一轮计数 */
     s_ap_clients = 0;
     disarm_conn_timers();
+    esp_timer_stop(s_ap_fallback_timer);   /* AP 即将开启，无需继续计时 */
     s_scanning = false;
     update_led();   /* 橙色 */
 
@@ -391,6 +397,7 @@ void wifi_mgr_connect(const wifi_config_data_t *cfg)
     s_self_disconnect = false;   /* 新连接周期，作废旧的自断开标志 */
     s_scanning = false;
     disarm_conn_timers();
+    esp_timer_stop(s_ap_fallback_timer);   /* 新配置/新周期，重新给满兜底时间预算 */
 
     set_state(WIFI_MGR_STATE_CONNECTING);
 

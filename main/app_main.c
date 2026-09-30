@@ -13,6 +13,7 @@
 
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_ota_ops.h"
 #include "esp_system.h"   /* esp_restart() (v6.0: 由 esp_restart.h 迁移至此) */
 #include "esp_timer.h"
 #include "freertos/FreeRTOS.h"
@@ -97,6 +98,19 @@ static void init_mdns(void)
     ESP_LOGI(TAG, "mDNS ready: http://esp32c5.local");
 }
 
+/* OTA 回滚保护：确认当前固件可用，取消 bootloader 的自动回退倒计时。
+ * 必须在核心服务起来后调用，否则崩溃循环时会一直卡在"待确认"状态。 */
+static void confirm_ota_valid(void)
+{
+    const esp_partition_t *running = esp_ota_get_running_partition();
+    esp_ota_img_states_t state;
+    if (esp_ota_get_state_partition(running, &state) == ESP_OK &&
+        state == ESP_OTA_IMG_PENDING_VERIFY) {
+        esp_ota_mark_app_valid_cancel_rollback();
+        ESP_LOGI(TAG, "OTA image marked valid, rollback cancelled");
+    }
+}
+
 void app_main(void)
 {
     ESP_LOGI(TAG, "ESP32-C5 web provisioning firmware starting");
@@ -132,4 +146,6 @@ void app_main(void)
 #endif
 
     wifi_mgr_start();   /* 有配置 -> 连接；无配置 -> SoftAP 配网 */
+
+    confirm_ota_valid();
 }
