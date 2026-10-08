@@ -1,17 +1,26 @@
 {
-    "idf.espIdfPathWin": "E:\\Users\\Administrator\\esp\\v6.0.2\\esp-idf",
-    "idf.toolsPathWin": "E:\\Users\\Administrator\\.espressif",
-    "idf.pythonInstallPath": "E:\\Users\\Administrator\\.espressif\\tools\\idf-python\\3.11.2\\python.exe",
-    "idf.flashType": "UART",
-    "idf.portWin": "COM10",
-    "idf.monitorPort": "COM10",
-    "idf.flashBaudRate": "115200",
-    "idf.monitorBaudRate": "115200",
-    "idf.buildPathWin": "${workspaceFolder}\\build",
-    "idf.cmakeCompilerArgs": [
-        "-G",
-        "Ninja",
-        "-DPYTHON_DEPS_CHECKED=1",
-        "-DESP_PLATFORM=1"
-    ]
+  "idf.espIdfPathWin": "E:\\Users\\Administrator\\esp\\v6.0.2\\esp-idf",
+  "idf.toolsPathWin": "E:\\Users\\Administrator\\.espressif",
+  "idf.pythonInstallPath": "E:\\Users\\Administrator\\.espressif\\tools\\idf-python\\3.11.2\\python.exe",
+  "idf.flashType": "UART",
+  "idf.portWin": "COM13",
+  "idf.monitorPort": "COM13",
+  "idf.flashBaudRate": "115200",
+  "idf.monitorBaudRate": "115200",
+  "idf.buildPathWin": "${workspaceFolder}\\build",
+  "idf.cmakeCompilerArgs": [
+    "-G",
+    "Ninja",
+    "-DPYTHON_DEPS_CHECKED=1",
+    "-DESP_PLATFORM=1"
+  ],
+  "idf.customExtraVars": {
+    "IDF_TARGET": "esp32c5"
+  },
+  "clangd.path": "E:\\Users\\Administrator\\.espressif\\tools\\esp-clang\\esp-20.1.1_20250829\\esp-clang\\bin\\clangd.exe",
+  "clangd.arguments": [
+    "--background-index",
+    "--query-driver=E:\\Users\\Administrator\\.espressif\\tools\\riscv32-esp-elf\\esp-15.2.0_20251204\\riscv32-esp-elf\\bin\\riscv32-esp-elf-gcc.exe",
+    "--compile-commands-dir=d:\\Deepseek Harness\\esp32_XL\\esp32c5_web_provision\\build"
+  ]
 }
