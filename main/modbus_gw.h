@@ -26,3 +26,6 @@ esp_err_t modbus_gw_reconfigure(const gw_config_t *cfg);
 void modbus_gw_get_config(gw_config_t *cfg);
 
 bool modbus_gw_is_running(void);
+
+/* 当前已连接的 Modbus TCP 客户端 IP（取第一个槽位）；无连接返回 false */
+bool modbus_gw_get_client_ip(char *buf, size_t len);

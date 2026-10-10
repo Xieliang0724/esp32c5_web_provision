@@ -1,5 +1,14 @@
 # Changelog
 
+## [v1.4.0] - 2026-10-10
+
+### ✨ 新增：UART0 定时打印网络状态（供下游 GD32 等设备解析）
+
+- 新增每秒一次的 `[NET]` 状态行，走 UART0（控制台口），不占用 UART1（Modbus RTU 专用），避免与网关二进制帧混在一起。
+- 格式：`[NET] sta=<UNINIT|CONFIG|CONNECTING|CONNECTED> ssid=<SSID|-> ip=<IP> gw=<网关IP> rssi=<dBm> ap=<ON|OFF> port=<Modbus端口,0=未启用> client=<当前Modbus TCP客户端IP|0.0.0.0>`
+- 示例：`[NET] sta=CONNECTED ssid=warehouse_5G ip=10.15.9.39 gw=10.15.9.1 rssi=-42 ap=ON port=502 client=10.15.9.20`
+- `modbus_gw` 新增客户端 IP 跟踪（`modbus_gw_get_client_ip()`），供该状态行展示当前已连接的 Modbus TCP 客户端来源 IP。
+
 ## [v1.3.0] - 2026-09-30
 
 ### ✨ 新增：网页手动上传固件 OTA 升级

@@ -9,10 +9,12 @@
  * 复位按键（可选）：长按 CONFIG_PROV_RESET_GPIO 3 秒
  *   清除已保存配置并重启进入配网模式。
  */
+#include <stdio.h>
 #include <string.h>
 
 #include "driver/gpio.h"
 #include "esp_log.h"
+#include "esp_netif.h"
 #include "esp_ota_ops.h"
 #include "esp_system.h"   /* esp_restart() (v6.0: 由 esp_restart.h 迁移至此) */
 #include "esp_timer.h"
@@ -111,6 +113,64 @@ static void confirm_ota_valid(void)
     }
 }
 
+/* 定时向 UART0（控制台口）打印网络状态，供 GD32 等下游设备解析，
+ * 格式固定：[NET] sta=.. ssid=.. ip=.. gw=.. rssi=.. ap=.. port=.. client=..
+ * 走 UART0 而非 UART1，避免与 modbus_gw 的 RTU 二进制帧混在一起。 */
+static void net_status_log_task(void *arg)
+{
+    const char *STA_NAMES[] = {
+        [WIFI_MGR_STATE_UNINIT]     = "UNINIT",
+        [WIFI_MGR_STATE_CONFIG]     = "CONFIG",
+        [WIFI_MGR_STATE_CONNECTING] = "CONNECTING",
+        [WIFI_MGR_STATE_CONNECTED]  = "CONNECTED",
+    };
+    while (1) {
+        wifi_mgr_state_t st = wifi_mgr_get_state();
+        const char *sta_str = (st <= WIFI_MGR_STATE_CONNECTED) ? STA_NAMES[st] : "UNKNOWN";
+
+        char ssid[33] = "-";
+        char ip[32] = "0.0.0.0";
+        char gw[32] = "0.0.0.0";
+        int8_t rssi = 0;
+
+        if (st == WIFI_MGR_STATE_CONNECTED) {
+            wifi_mgr_get_sta_ip(ip, sizeof(ip));
+            esp_netif_t *sta = wifi_mgr_get_sta_netif();
+            if (sta) {
+                esp_netif_ip_info_t ip_info = {0};
+                if (esp_netif_get_ip_info(sta, &ip_info) == ESP_OK) {
+                    esp_ip4addr_ntoa(&ip_info.gw, gw, sizeof(gw));
+                }
+            }
+            wifi_config_t wcfg = {0};
+            if (esp_wifi_get_config(WIFI_IF_STA, &wcfg) == ESP_OK) {
+                strlcpy(ssid, (char *)wcfg.sta.ssid, sizeof(ssid));
+            }
+            wifi_ap_record_t ap_info = {0};
+            if (wifi_mgr_get_sta_ap_info(&ap_info) == ESP_OK) {
+                rssi = ap_info.rssi;
+            }
+        }
+
+        gw_config_t gwcfg;
+        gw_config_load(&gwcfg);
+        uint16_t port = (gwcfg.enabled && modbus_gw_is_running()) ? gwcfg.port : 0;
+
+        char client_ip[16] = "0.0.0.0";
+        modbus_gw_get_client_ip(client_ip, sizeof(client_ip));
+
+        printf("[NET] sta=%s ssid=%s ip=%s gw=%s rssi=%d ap=%s port=%u client=%s\r\n",
+               sta_str, ssid, ip, gw, rssi, wifi_mgr_is_ap_on() ? "ON" : "OFF", port, client_ip);
+
+        vTaskDelay(pdMS_TO_TICKS(1000));
+    }
+}
+
+static void start_net_status_log_task(void)
+{
+    xTaskCreate(net_status_log_task, "net_status_log", 3072, NULL, 3, NULL);
+}
+
 void app_main(void)
 {
     ESP_LOGI(TAG, "ESP32-C5 web provisioning firmware starting");
@@ -148,4 +208,5 @@ void app_main(void)
     wifi_mgr_start();   /* 有配置 -> 连接；无配置 -> SoftAP 配网 */
 
     confirm_ota_valid();
+    start_net_status_log_task();
 }

@@ -48,6 +48,7 @@ static TaskHandle_t s_uart_rx_task = NULL;
 static TaskHandle_t s_listener_tasks[MAX_LISTENERS] = {0};
 static TaskHandle_t s_client_tasks[MAX_TCP_CLIENTS] = {0};
 static int s_client_fds[MAX_TCP_CLIENTS] = {-1, -1, -1, -1};
+static char s_client_ips[MAX_TCP_CLIENTS][16] = {{0}};  /* 与 s_client_fds 同下标，供 [NET] 日志展示 */
 static int s_listen_fds[MAX_LISTENERS] = {-1, -1};
 
 /* ------------------------------------------------------------------ */
@@ -312,6 +313,7 @@ static void close_client(int idx)
         close(s_client_fds[idx]);
         s_client_fds[idx] = -1;
         s_client_tasks[idx] = NULL;
+        s_client_ips[idx][0] = '\0';
     }
 }
 
@@ -508,9 +510,9 @@ static void tcp_listener_task(void *arg)
         }
 
         /* 客户端 IP 白名单 */
+        char peer_ip[16];
+        strlcpy(peer_ip, inet_ntoa(peer.sin_addr), sizeof(peer_ip));
         if (s_cfg.client_ip[0] != '\0') {
-            char peer_ip[16];
-            strlcpy(peer_ip, inet_ntoa(peer.sin_addr), sizeof(peer_ip));
             if (strcmp(peer_ip, s_cfg.client_ip) != 0) {
                 ESP_LOGW(TAG, "reject client %s (allowlist %s)", peer_ip, s_cfg.client_ip);
                 close(client);
@@ -532,6 +534,7 @@ static void tcp_listener_task(void *arg)
         int slot = find_free_client_slot();
         if (slot >= 0) {
             s_client_fds[slot] = client;
+            strlcpy(s_client_ips[slot], peer_ip, sizeof(s_client_ips[slot]));
         }
         xSemaphoreGive(s_slot_mutex);
         if (slot < 0) {
@@ -545,6 +548,7 @@ static void tcp_listener_task(void *arg)
             xSemaphoreTake(s_slot_mutex, portMAX_DELAY);
             s_client_fds[slot] = -1;
             s_client_tasks[slot] = NULL;
+            s_client_ips[slot][0] = '\0';
             xSemaphoreGive(s_slot_mutex);
             ESP_LOGE(TAG, "client arg malloc failed");
             close(client);
@@ -559,6 +563,7 @@ static void tcp_listener_task(void *arg)
             xSemaphoreTake(s_slot_mutex, portMAX_DELAY);
             s_client_fds[slot] = -1;
             s_client_tasks[slot] = NULL;
+            s_client_ips[slot][0] = '\0';
             xSemaphoreGive(s_slot_mutex);
             ESP_LOGE(TAG, "client task create failed");
             free(ca);
@@ -599,6 +604,7 @@ static void gw_stop(void)
             close(s_client_fds[i]);
             s_client_fds[i] = -1;
             s_client_tasks[i] = NULL;
+            s_client_ips[i][0] = '\0';
         }
     }
     xSemaphoreGive(s_slot_mutex);
@@ -766,4 +772,21 @@ void modbus_gw_get_config(gw_config_t *cfg)
 bool modbus_gw_is_running(void)
 {
     return s_running;
+}
+
+bool modbus_gw_get_client_ip(char *buf, size_t len)
+{
+    if (!s_slot_mutex) {
+        return false;
+    }
+    xSemaphoreTake(s_slot_mutex, portMAX_DELAY);
+    for (int i = 0; i < MAX_TCP_CLIENTS; i++) {
+        if (s_client_fds[i] >= 0) {
+            strlcpy(buf, s_client_ips[i], len);
+            xSemaphoreGive(s_slot_mutex);
+            return true;
+        }
+    }
+    xSemaphoreGive(s_slot_mutex);
+    return false;
 }
