@@ -1,5 +1,19 @@
 # Changelog
 
+## [v2.0.0] - 2026-10-18
+
+### ⚠️ Breaking Changes
+
+- Removed the Modbus TCP TLS listener and `/api/cert`; the gateway now serves plaintext Modbus TCP only.
+- Fixed the Modbus RTU link to UART1 GPIO8/9 at 115200 8N1. UART pins and baud rate are no longer configurable.
+
+### ✨ GD32 Main Controller OTA
+
+- Added web upload, status, and configuration endpoints for GD32 firmware; images are limited to 64 KB.
+- Reuse the Modbus UART to trigger GD32 via register 49, retry SYNC while the Bootloader starts, and wait up to 30 seconds for final flash verification.
+- Validate the FC06 trigger echo and restore the gateway only when the OTA task stopped it.
+- Updated the two firmware upload button labels.
+
 ## [v1.4.0] - 2026-10-10
 
 ### ✨ 新增：UART0 定时打印网络状态（供下游 GD32 等设备解析）

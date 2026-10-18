@@ -19,6 +19,15 @@
 /* 初始化：加载已保存配置，若启用则启动网关 */
 void modbus_gw_init(void);
 
+/* 停止网关（释放 UART）。供 GD32 OTA 临时让出同路 UART 使用 */
+void modbus_gw_stop(void);
+
+/* 暂停网关任务但保留 UART1 驱动（供 GD32 OTA 直接复用同路 UART 收发） */
+void modbus_gw_pause(void);
+
+/* 按已保存配置重新启动网关 */
+esp_err_t modbus_gw_start(void);
+
 /* 应用新配置（停止旧网关并重启） */
 esp_err_t modbus_gw_reconfigure(const gw_config_t *cfg);
 
@@ -29,3 +38,7 @@ bool modbus_gw_is_running(void);
 
 /* 当前已连接的 Modbus TCP 客户端 IP（取第一个槽位）；无连接返回 false */
 bool modbus_gw_get_client_ip(char *buf, size_t len);
+
+/* 直接向 RTU 从站写一个保持寄存器（走网关已运行的 UART1）。
+ * 用于 GD32 OTA 触发。返回 false 表示网关未运行或从站无响应。 */
+bool modbus_gw_write_holding(uint8_t uid, uint16_t reg, uint16_t value);

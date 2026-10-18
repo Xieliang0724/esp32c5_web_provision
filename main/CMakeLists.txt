@@ -2,6 +2,7 @@ idf_component_register(
     SRCS
         "app_main.c"
         "config_store.c"
+        "gd_ota.c"
         "wifi_mgr.c"
         "web_server.c"
         "rgb_led.c"
@@ -9,8 +10,6 @@ idf_component_register(
     INCLUDE_DIRS "."
     EMBED_FILES
         "www/index.html"
-        "certs/server_cert.pem"
-        "certs/server_key.pem"
     REQUIRES
         esp_wifi
         esp_netif
@@ -28,5 +27,4 @@ idf_component_register(
         led_strip
         lwip
         mdns
-        mbedtls
 )

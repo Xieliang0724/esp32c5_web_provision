@@ -173,14 +173,11 @@ esp_err_t config_store_clear(void)
 #define GW_KEY_TX      "tx"
 #define GW_KEY_RX      "rx"
 #define GW_KEY_IP      "ip"
-#define GW_KEY_TLS_EN  "tls_en"
-#define GW_KEY_TLS_P   "tls_port"
 
 #define GW_DEFAULT_PORT 502
-#define GW_DEFAULT_BAUD 9600
-#define GW_DEFAULT_TX   5
-#define GW_DEFAULT_RX   6
-#define GW_DEFAULT_TLS_PORT 802
+#define GW_DEFAULT_BAUD 115200
+#define GW_DEFAULT_TX   8
+#define GW_DEFAULT_RX   9
 
 void gw_config_load(gw_config_t *cfg)
 {
@@ -189,7 +186,6 @@ void gw_config_load(gw_config_t *cfg)
     cfg->baud = GW_DEFAULT_BAUD;
     cfg->tx_gpio = GW_DEFAULT_TX;
     cfg->rx_gpio = GW_DEFAULT_RX;
-    cfg->tls_port = GW_DEFAULT_TLS_PORT;
 
     nvs_handle_t h;
     if (nvs_open(GW_NAMESPACE, NVS_READONLY, &h) != ESP_OK) {
@@ -199,27 +195,14 @@ void gw_config_load(gw_config_t *cfg)
     if (nvs_get_u8(h, GW_KEY_ENABLED, &v) == ESP_OK) {
         cfg->enabled = (v != 0);
     }
-    if (nvs_get_u8(h, GW_KEY_TLS_EN, &v) == ESP_OK) {
-        cfg->tls_enabled = (v != 0);
-    }
     uint16_t u16 = 0;
     if (nvs_get_u16(h, GW_KEY_PORT, &u16) == ESP_OK && u16 != 0) {
         cfg->port = u16;
     }
-    if (nvs_get_u16(h, GW_KEY_TLS_P, &u16) == ESP_OK && u16 != 0) {
-        cfg->tls_port = u16;
-    }
-    uint32_t u32 = 0;
-    if (nvs_get_u32(h, GW_KEY_BAUD, &u32) == ESP_OK && u32 != 0) {
-        cfg->baud = u32;
-    }
-    int8_t i8 = -1;
-    if (nvs_get_i8(h, GW_KEY_TX, &i8) == ESP_OK) {
-        cfg->tx_gpio = i8;
-    }
-    if (nvs_get_i8(h, GW_KEY_RX, &i8) == ESP_OK) {
-        cfg->rx_gpio = i8;
-    }
+    /* UART1 引脚/波特率固定：TX=8, RX=9, 115200 */
+    cfg->baud = GW_DEFAULT_BAUD;
+    cfg->tx_gpio = GW_DEFAULT_TX;
+    cfg->rx_gpio = GW_DEFAULT_RX;
     size_t len = sizeof(cfg->client_ip);
     nvs_get_str(h, GW_KEY_IP, cfg->client_ip, &len);
     nvs_close(h);
@@ -234,12 +217,10 @@ esp_err_t gw_config_save(const gw_config_t *cfg)
     }
     ret = nvs_set_u8(h, GW_KEY_ENABLED, cfg->enabled ? 1 : 0);
     if (ret == ESP_OK) ret = nvs_set_u16(h, GW_KEY_PORT, cfg->port);
-    if (ret == ESP_OK) ret = nvs_set_u32(h, GW_KEY_BAUD, cfg->baud);
-    if (ret == ESP_OK) ret = nvs_set_i8(h, GW_KEY_TX, cfg->tx_gpio);
-    if (ret == ESP_OK) ret = nvs_set_i8(h, GW_KEY_RX, cfg->rx_gpio);
+    if (ret == ESP_OK) ret = nvs_set_u32(h, GW_KEY_BAUD, GW_DEFAULT_BAUD);
+    if (ret == ESP_OK) ret = nvs_set_i8(h, GW_KEY_TX, GW_DEFAULT_TX);
+    if (ret == ESP_OK) ret = nvs_set_i8(h, GW_KEY_RX, GW_DEFAULT_RX);
     if (ret == ESP_OK) ret = nvs_set_str(h, GW_KEY_IP, cfg->client_ip);
-    if (ret == ESP_OK) ret = nvs_set_u8(h, GW_KEY_TLS_EN, cfg->tls_enabled ? 1 : 0);
-    if (ret == ESP_OK) ret = nvs_set_u16(h, GW_KEY_TLS_P, cfg->tls_port);
     if (ret == ESP_OK) ret = nvs_commit(h);
     nvs_close(h);
     if (ret != ESP_OK) {

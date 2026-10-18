@@ -23,6 +23,7 @@
 #include "mdns.h"
 
 #include "config_store.h"
+#include "gd_ota.h"
 #include "modbus_gw.h"
 #include "rgb_led.h"
 #include "web_server.h"
@@ -190,6 +191,7 @@ void app_main(void)
     /* 网关必须在 wifi_mgr_init（esp_netif_init/lwIP）之后启动，
      * 否则 socket() 会因 lwIP 未初始化而断言崩溃 */
     modbus_gw_init();
+    gd_ota_init();
 
 #if CONFIG_PROV_LED_GPIO >= 0
     rgb_led_init();

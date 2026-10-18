@@ -16,10 +16,6 @@
 #include "lwip/netdb.h"
 #include "lwip/inet.h"
 
-#include "mbedtls/ssl.h"
-#include "mbedtls/x509_crt.h"
-#include "mbedtls/pk.h"
-#include "mbedtls/error.h"
 
 #include "modbus_gw.h"
 
@@ -34,7 +30,7 @@ static const char *TAG = "mb_gw";
 #define MAX_TCP_CLIENTS    4
 #define RTU_RESP_TIMEOUT_MS 1000        /* 等待从站响应超时 */
 #define RX_IDLE_SYMBOLS    40           /* 帧间隙超时（符号数，约 4 字符） */
-#define MAX_LISTENERS      2            /* 明文 + TLS 两个监听 */
+#define MAX_LISTENERS      1            /* 仅明文 Modbus TCP 监听 */
 
 static gw_config_t s_cfg;
 static bool s_running = false;
@@ -49,85 +45,16 @@ static TaskHandle_t s_listener_tasks[MAX_LISTENERS] = {0};
 static TaskHandle_t s_client_tasks[MAX_TCP_CLIENTS] = {0};
 static int s_client_fds[MAX_TCP_CLIENTS] = {-1, -1, -1, -1};
 static char s_client_ips[MAX_TCP_CLIENTS][16] = {{0}};  /* 与 s_client_fds 同下标，供 [NET] 日志展示 */
-static int s_listen_fds[MAX_LISTENERS] = {-1, -1};
+static int s_listen_fds[MAX_LISTENERS] = {-1};
 
-/* ------------------------------------------------------------------ */
-/* TLS：固件内置服务器证书（单向 TLS，验证设备身份）                     */
-/* ------------------------------------------------------------------ */
-
-extern const uint8_t server_cert_pem_start[] asm("_binary_server_cert_pem_start");
-extern const uint8_t server_cert_pem_end[]   asm("_binary_server_cert_pem_end");
-extern const uint8_t server_key_pem_start[]  asm("_binary_server_key_pem_start");
-extern const uint8_t server_key_pem_end[]    asm("_binary_server_key_pem_end");
-
-static mbedtls_x509_crt s_srv_cert;
-static mbedtls_pk_context s_srv_key;
-static bool s_tls_ready = false;
-
-static void tls_init(void)
+/* 统一收发 */
+static int mb_net_recv(int fd, uint8_t *buf, size_t len)
 {
-    mbedtls_x509_crt_init(&s_srv_cert);
-    mbedtls_pk_init(&s_srv_key);
-
-    /* EMBED_FILES 字节数组无 null 结尾，而 mbedTLS 的 PEM 解析要求
-     * 缓冲区以 '\0' 结尾，故先拷贝到带结尾符的缓冲区再解析。 */
-    size_t cert_len = server_cert_pem_end - server_cert_pem_start;
-    size_t key_len = server_key_pem_end - server_key_pem_start;
-    uint8_t *buf = malloc((cert_len > key_len ? cert_len : key_len) + 1);
-    if (!buf) {
-        ESP_LOGE(TAG, "tls buf malloc failed");
-        return;
-    }
-
-    int ret = 0;
-    memcpy(buf, server_cert_pem_start, cert_len);
-    buf[cert_len] = '\0';
-    ret = mbedtls_x509_crt_parse(&s_srv_cert, buf, cert_len + 1);
-    if (ret != 0) {
-        ESP_LOGE(TAG, "cert parse failed: -0x%04X", -ret);
-        free(buf);
-        return;
-    }
-    memcpy(buf, server_key_pem_start, key_len);
-    buf[key_len] = '\0';
-    ret = mbedtls_pk_parse_key(&s_srv_key, buf, key_len + 1, NULL, 0);
-    if (ret != 0) {
-        ESP_LOGE(TAG, "key parse failed: -0x%04X", -ret);
-        free(buf);
-        return;
-    }
-    free(buf);
-    s_tls_ready = true;
-    ESP_LOGI(TAG, "TLS server cert loaded");
-}
-
-/* TLS BIO 回调：包装 socket fd（阻塞式） */
-static int tls_send_cb(void *ctx, const unsigned char *buf, size_t len)
-{
-    int fd = (int)(intptr_t)ctx;
-    return send(fd, buf, len, 0);
-}
-
-static int tls_recv_cb(void *ctx, unsigned char *buf, size_t len)
-{
-    int fd = (int)(intptr_t)ctx;
     return recv(fd, buf, len, 0);
 }
 
-/* 统一收发：plain 用 recv/send，TLS 用 mbedtls_ssl_read/write */
-static int mb_net_recv(int fd, mbedtls_ssl_context *ssl, uint8_t *buf, size_t len)
+static int mb_net_send(int fd, const uint8_t *buf, size_t len)
 {
-    if (ssl) {
-        return mbedtls_ssl_read(ssl, buf, len);
-    }
-    return recv(fd, buf, len, 0);
-}
-
-static int mb_net_send(int fd, mbedtls_ssl_context *ssl, const uint8_t *buf, size_t len)
-{
-    if (ssl) {
-        return mbedtls_ssl_write(ssl, buf, len);
-    }
     return send(fd, buf, len, 0);
 }
 
@@ -331,7 +258,6 @@ static int find_free_client_slot(void)
 typedef struct {
     int  fd;
     int  slot;   /* 槽位下标，退出时按它清理（fd 号会被复用，不能作标识） */
-    bool tls;
 } client_arg_t;
 
 static void tcp_client_task(void *arg)
@@ -339,42 +265,7 @@ static void tcp_client_task(void *arg)
     client_arg_t *ca = (client_arg_t *)arg;
     int fd = ca->fd;
     int slot = ca->slot;
-    bool tls = ca->tls;
     free(ca);
-
-    mbedtls_ssl_context ssl;
-    mbedtls_ssl_config ssl_conf;
-    mbedtls_ssl_context *ssl_p = NULL;
-
-    if (tls) {
-        if (!s_tls_ready) {
-            ESP_LOGE(TAG, "TLS not ready, close client");
-            goto client_done;
-        }
-        mbedtls_ssl_init(&ssl);
-        mbedtls_ssl_config_init(&ssl_conf);
-        int ret = mbedtls_ssl_config_defaults(&ssl_conf,
-                                              MBEDTLS_SSL_IS_SERVER,
-                                              MBEDTLS_SSL_TRANSPORT_STREAM,
-                                              MBEDTLS_SSL_PRESET_DEFAULT);
-        if (ret == 0) {
-            mbedtls_ssl_conf_authmode(&ssl_conf, MBEDTLS_SSL_VERIFY_NONE);  /* 单向：不验证客户端 */
-            mbedtls_ssl_conf_own_cert(&ssl_conf, &s_srv_cert, &s_srv_key);
-            ret = mbedtls_ssl_setup(&ssl, &ssl_conf);
-        }
-        if (ret == 0) {
-            mbedtls_ssl_set_bio(&ssl, (void *)(intptr_t)fd, tls_send_cb, tls_recv_cb, NULL);
-            ret = mbedtls_ssl_handshake(&ssl);
-        }
-        if (ret != 0) {
-            ESP_LOGW(TAG, "TLS handshake failed: -0x%04X", -ret);
-            mbedtls_ssl_free(&ssl);
-            mbedtls_ssl_config_free(&ssl_conf);
-            goto client_done;
-        }
-        ssl_p = &ssl;
-        ESP_LOGI(TAG, "TLS client handshake OK");
-    }
 
     uint8_t mbap[7];
     uint8_t buf[MAX_FRAME_SIZE];
@@ -383,7 +274,7 @@ static void tcp_client_task(void *arg)
         /* 读 MBAP 头（7 字节） */
         size_t got = 0;
         while (got < sizeof(mbap) && s_running) {
-            int n = mb_net_recv(fd, ssl_p, mbap + got, sizeof(mbap) - got);
+            int n = mb_net_recv(fd, mbap + got, sizeof(mbap) - got);
             if (n <= 0) {
                 goto client_done;   /* EOF / 连接关闭 / stop */
             }
@@ -401,7 +292,7 @@ static void tcp_client_task(void *arg)
         size_t pdu_len = len - 1;
         got = 0;
         while (got < pdu_len && s_running) {
-            int n = mb_net_recv(fd, ssl_p, buf + got, pdu_len - got);
+            int n = mb_net_recv(fd, buf + got, pdu_len - got);
             if (n <= 0) {
                 goto client_done;
             }
@@ -427,7 +318,7 @@ static void tcp_client_task(void *arg)
             size_t total = 7 + resp_pdu_len;
             size_t sent = 0;
             while (sent < total && s_running) {
-                int n = mb_net_send(fd, ssl_p, rsp + sent, total - sent);
+                int n = mb_net_send(fd, rsp + sent, total - sent);
                 if (n <= 0) {
                     goto client_done;
                 }
@@ -439,11 +330,6 @@ static void tcp_client_task(void *arg)
 
 client_done:
     ESP_LOGI(TAG, "client disconnected");
-    if (ssl_p) {
-        mbedtls_ssl_close_notify(&ssl);
-        mbedtls_ssl_free(&ssl);
-        mbedtls_ssl_config_free(&ssl_conf);
-    }
     /* 按 slot 清理；fd 可能已被 gw_stop 关闭并复用给新连接，
      * 仅当槽位仍归属本任务的 fd 时才关闭 */
     xSemaphoreTake(s_slot_mutex, portMAX_DELAY);
@@ -461,7 +347,6 @@ client_done:
 /* 监听任务参数 */
 typedef struct {
     uint16_t port;
-    bool     tls;
     int      idx;   /* 对应 s_listen_fds 槽位 */
 } listener_arg_t;
 
@@ -469,7 +354,6 @@ static void tcp_listener_task(void *arg)
 {
     listener_arg_t *la = (listener_arg_t *)arg;
     uint16_t port = la->port;
-    bool tls = la->tls;
     int idx = la->idx;
     free(la);
 
@@ -496,7 +380,7 @@ static void tcp_listener_task(void *arg)
     }
     listen(fd, 4);
     s_listen_fds[idx] = fd;
-    ESP_LOGI(TAG, "Modbus TCP%s listening on port %u", tls ? " (TLS)" : "", port);
+    ESP_LOGI(TAG, "Modbus TCP listening on port %u", port);
 
     while (s_running) {
         struct sockaddr_in peer;
@@ -556,7 +440,6 @@ static void tcp_listener_task(void *arg)
         }
         ca->fd = client;
         ca->slot = slot;
-        ca->tls = tls;
         if (xTaskCreate(tcp_client_task, "mb_tcp_client", 8192, ca, 6,
                         &s_client_tasks[slot]) != pdPASS) {
             /* 任务创建失败，归还槽位 */
@@ -581,7 +464,7 @@ static void tcp_listener_task(void *arg)
 /* 对外接口                                                            */
 /* ------------------------------------------------------------------ */
 
-static void gw_stop(void)
+static void gw_stop_ex(bool keep_uart)
 {
     if (!s_running) {
         return;
@@ -627,8 +510,15 @@ static void gw_stop(void)
     }
     /* 响应队列与互斥锁不随 stop 删除（首次创建后跨重启复用），
      * 避免仍在运行的事务访问已释放对象 */
-    uart_driver_delete(GW_UART_NUM);
-    ESP_LOGI(TAG, "gateway stopped");
+    if (!keep_uart) {
+        uart_driver_delete(GW_UART_NUM);
+    }
+    ESP_LOGI(TAG, "gateway stopped%s", keep_uart ? " (uart kept)" : "");
+}
+
+static void gw_stop(void)
+{
+    gw_stop_ex(false);
 }
 
 static esp_err_t gw_start(const gw_config_t *cfg)
@@ -645,14 +535,6 @@ static esp_err_t gw_start(const gw_config_t *cfg)
     if (s_cfg.baud == 0) {
         s_cfg.baud = 9600;
     }
-    if (s_cfg.tls_enabled && s_cfg.tls_port == 0) {
-        s_cfg.tls_port = 802;
-    }
-    if (s_cfg.tls_enabled && s_cfg.tls_port == s_cfg.port) {
-        ESP_LOGE(TAG, "tls_port must differ from port");
-        return ESP_ERR_INVALID_ARG;
-    }
-
     uart_config_t uart_cfg = {
         .baud_rate = s_cfg.baud,
         .data_bits = UART_DATA_8_BITS,
@@ -663,7 +545,11 @@ static esp_err_t gw_start(const gw_config_t *cfg)
     };
     esp_err_t ret = uart_driver_install(GW_UART_NUM, UART_RX_BUF_SIZE, UART_TX_BUF_SIZE,
                                         UART_EVT_QUEUE_LEN, &s_uart_evt_queue, 0);
-    if (ret != ESP_OK) {
+    if (ret == ESP_ERR_INVALID_STATE) {
+        /* 从 pause 恢复：UART1 驱动仍在，直接复用 */
+        ESP_LOGI(TAG, "UART1 driver already installed, resuming");
+        ret = ESP_OK;
+    } else if (ret != ESP_OK) {
         ESP_LOGE(TAG, "uart install failed: %s", esp_err_to_name(ret));
         return ret;
     }
@@ -689,11 +575,6 @@ static esp_err_t gw_start(const gw_config_t *cfg)
         return ESP_ERR_NO_MEM;
     }
 
-    /* TLS 初始化（解析内置证书/私钥，仅一次） */
-    if (s_cfg.tls_enabled && !s_tls_ready) {
-        tls_init();
-    }
-
     s_running = true;
 
     if (xTaskCreate(uart_rx_task, "mb_uart_rx", 4096, NULL, 7, &s_uart_rx_task) != pdPASS) {
@@ -704,7 +585,6 @@ static esp_err_t gw_start(const gw_config_t *cfg)
     listener_arg_t *la = malloc(sizeof(listener_arg_t));
     if (la) {
         la->port = s_cfg.port;
-        la->tls = false;
         la->idx = 0;
         if (xTaskCreate(tcp_listener_task, "mb_tcp_listen", 4096, la, 5,
                         &s_listener_tasks[0]) != pdPASS) {
@@ -713,26 +593,8 @@ static esp_err_t gw_start(const gw_config_t *cfg)
             goto start_fail;
         }
     }
-    if (s_cfg.tls_enabled && s_tls_ready) {
-        listener_arg_t *la2 = malloc(sizeof(listener_arg_t));
-        if (la2) {
-            la2->port = s_cfg.tls_port;
-            la2->tls = true;
-            la2->idx = 1;
-            if (xTaskCreate(tcp_listener_task, "mb_tls_listen", 4096, la2, 5,
-                            &s_listener_tasks[1]) != pdPASS) {
-                free(la2);
-                ESP_LOGE(TAG, "failed to create TLS listener task");
-                goto start_fail;
-            }
-        }
-    }
-    ESP_LOGI(TAG, "gateway started (port %u%s, allowlist=%s)",
-             s_cfg.port, s_cfg.tls_enabled ? " + TLS port " : "",
-             s_cfg.client_ip[0] ? s_cfg.client_ip : "none");
-    if (s_cfg.tls_enabled) {
-        ESP_LOGI(TAG, "TLS port %u", s_cfg.tls_port);
-    }
+    ESP_LOGI(TAG, "gateway started (port %u, allowlist=%s)",
+             s_cfg.port, s_cfg.client_ip[0] ? s_cfg.client_ip : "none");
     return ESP_OK;
 
 start_fail:
@@ -754,6 +616,27 @@ void modbus_gw_init(void)
     }
 }
 
+void modbus_gw_stop(void)
+{
+    gw_stop();
+}
+
+void modbus_gw_pause(void)
+{
+    gw_stop_ex(true);
+}
+
+esp_err_t modbus_gw_start(void)
+{
+    gw_config_t cfg;
+    gw_config_load(&cfg);
+    if (!cfg.enabled) {
+        ESP_LOGI(TAG, "gateway disabled by config");
+        return ESP_OK;
+    }
+    return gw_start(&cfg);
+}
+
 esp_err_t modbus_gw_reconfigure(const gw_config_t *cfg)
 {
     gw_stop();
@@ -772,6 +655,29 @@ void modbus_gw_get_config(gw_config_t *cfg)
 bool modbus_gw_is_running(void)
 {
     return s_running;
+}
+
+bool modbus_gw_write_holding(uint8_t uid, uint16_t reg, uint16_t value)
+{
+    if (!s_running) {
+        ESP_LOGW(TAG, "gw not running, cannot trigger");
+        return false;
+    }
+    uint8_t pdu[5];
+    pdu[0] = 0x06;                   /* 写单个寄存器 */
+    pdu[1] = (uint8_t)(reg >> 8);
+    pdu[2] = (uint8_t)(reg & 0xFF);
+    pdu[3] = (uint8_t)(value >> 8);
+    pdu[4] = (uint8_t)(value & 0xFF);
+    uint8_t resp_pdu[8];
+    size_t resp_len = 0;
+    bool ok = rtu_transaction(uid, pdu, sizeof(pdu), resp_pdu, &resp_len);
+    if (ok && (resp_len != sizeof(pdu) || memcmp(resp_pdu, pdu, sizeof(pdu)) != 0)) {
+        ESP_LOGW(TAG, "trigger write got non-echo response");
+        ok = false;
+    }
+    ESP_LOGI(TAG, "trigger write reg=%u val=0x%04X -> %s", reg, value, ok ? "ok" : "noresp");
+    return ok;
 }
 
 bool modbus_gw_get_client_ip(char *buf, size_t len)

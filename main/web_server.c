@@ -14,6 +14,7 @@
 #include "cJSON.h"
 
 #include "config_store.h"
+#include "gd_ota.h"
 #include "modbus_gw.h"
 #include "web_server.h"
 #include "wifi_mgr.h"
@@ -23,10 +24,6 @@ static const char *TAG = "web_srv";
 /* 内嵌网页 (main/www/index.html) */
 extern const uint8_t index_html_start[] asm("_binary_index_html_start");
 extern const uint8_t index_html_end[]   asm("_binary_index_html_end");
-
-/* 内嵌 TLS 服务器证书（用于 /api/cert 下载） */
-extern const uint8_t server_cert_pem_start[] asm("_binary_server_cert_pem_start");
-extern const uint8_t server_cert_pem_end[]   asm("_binary_server_cert_pem_end");
 
 #define MAX_POST_BODY 1024
 #define SCAN_LIST_MAX 30
@@ -122,16 +119,6 @@ static esp_err_t handle_root(httpd_req_t *req)
     httpd_resp_set_type(req, "text/html; charset=utf-8");
     httpd_resp_set_hdr(req, "Cache-Control", "no-store");
     return httpd_resp_send(req, (const char *)index_html_start, len);
-}
-
-/* 下载设备 TLS 证书（仅公钥证书，供客户端信任设备） */
-static esp_err_t handle_cert_get(httpd_req_t *req)
-{
-    size_t len = server_cert_pem_end - server_cert_pem_start;
-    httpd_resp_set_type(req, "application/x-pem-file");
-    httpd_resp_set_hdr(req, "Content-Disposition", "attachment; filename=esp32c5_cert.pem");
-    httpd_resp_set_hdr(req, "Cache-Control", "no-store");
-    return httpd_resp_send(req, (const char *)server_cert_pem_start, len);
 }
 
 static esp_err_t handle_status(httpd_req_t *req)
@@ -512,16 +499,9 @@ static esp_err_t handle_gw_get(httpd_req_t *req)
     cJSON_AddNumberToObject(obj, "tx", cfg.tx_gpio);
     cJSON_AddNumberToObject(obj, "rx", cfg.rx_gpio);
     cJSON_AddStringToObject(obj, "client_ip", cfg.client_ip);
-    cJSON_AddBoolToObject(obj, "tls_enabled", cfg.tls_enabled);
-    cJSON_AddNumberToObject(obj, "tls_port", cfg.tls_port);
     esp_err_t ret = send_json_obj(req, obj);
     cJSON_Delete(obj);
     return ret;
-}
-
-static bool valid_gpio(int g)
-{
-    return g >= 0 && g <= 48;
 }
 
 static esp_err_t handle_gw_post(httpd_req_t *req)
@@ -554,31 +534,14 @@ static esp_err_t handle_gw_post(httpd_req_t *req)
     if (cJSON_IsNumber(j) && j->valueint >= 1 && j->valueint <= 65535) {
         cfg.port = j->valueint;
     }
-    j = cJSON_GetObjectItem(root, "baud");
-    if (cJSON_IsNumber(j) && j->valueint >= 300 && j->valueint <= 2000000) {
-        cfg.baud = j->valueint;
-    }
-    j = cJSON_GetObjectItem(root, "tx");
-    if (cJSON_IsNumber(j) && valid_gpio(j->valueint)) {
-        cfg.tx_gpio = j->valueint;
-    }
-    j = cJSON_GetObjectItem(root, "rx");
-    if (cJSON_IsNumber(j) && valid_gpio(j->valueint)) {
-        cfg.rx_gpio = j->valueint;
-    }
+    /* 串口参数固定：UART1 TX=8 RX=9 波特率=115200，不随请求修改 */
+    cfg.baud = 115200;
+    cfg.tx_gpio = 8;
+    cfg.rx_gpio = 9;
     j = cJSON_GetObjectItem(root, "client_ip");
     if (cJSON_IsString(j) && strlen(j->valuestring) < sizeof(cfg.client_ip)) {
         strlcpy(cfg.client_ip, j->valuestring, sizeof(cfg.client_ip));
     }
-    j = cJSON_GetObjectItem(root, "tls_enabled");
-    if (cJSON_IsBool(j)) {
-        cfg.tls_enabled = cJSON_IsTrue(j);
-    }
-    j = cJSON_GetObjectItem(root, "tls_port");
-    if (cJSON_IsNumber(j) && j->valueint >= 1 && j->valueint <= 65535) {
-        cfg.tls_port = j->valueint;
-    }
-
     if (cfg.tx_gpio == cfg.rx_gpio) {
         cJSON_Delete(root);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "tx and rx must differ");
@@ -588,12 +551,6 @@ static esp_err_t handle_gw_post(httpd_req_t *req)
     if (cfg.tx_gpio == 11 || cfg.rx_gpio == 11 || cfg.tx_gpio == 12 || cfg.rx_gpio == 12) {
         cJSON_Delete(root);
         httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "GPIO11/12 used by console UART");
-        return ESP_FAIL;
-    }
-    /* TLS 端口不能与明文端口相同 */
-    if (cfg.tls_enabled && cfg.tls_port == cfg.port) {
-        cJSON_Delete(root);
-        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "TLS port must differ from plain port");
         return ESP_FAIL;
     }
     cJSON_Delete(root);
@@ -715,6 +672,168 @@ static esp_err_t handle_ota_post(httpd_req_t *req)
     return sret;
 }
 
+
+/* ------------------------------------------------------------------ */
+/* GD32 固件 OTA 推送（网页上传 .bin -> 推送 GD32）                      */
+/* ------------------------------------------------------------------ */
+
+static esp_err_t handle_gdota_post(httpd_req_t *req)
+{
+    if (!advanced_password_ok(req)) {
+        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "advanced settings password required");
+        return ESP_FAIL;
+    }
+    if (!modbus_gw_is_running()) {
+        return send_json_status_msg(req, "error", "请先启用 Modbus 网关，再升级 GD32");
+    }
+    if (req->content_len == 0) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "empty body");
+        return ESP_FAIL;
+    }
+    if (req->content_len > GDOTA_MAX_SIZE) {
+        return send_json_status_msg(req, "error", "固件过大，GD32 bootloader 仅支持 64KB 固件");
+    }
+
+    uint8_t *fw = malloc(req->content_len);
+    if (!fw) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "no memory");
+        return ESP_ERR_NO_MEM;
+    }
+
+    ESP_LOGI(TAG, "gdota upload start len=%d", req->content_len);
+    int total = 0;
+    while (total < req->content_len) {
+        int to_read = req->content_len - total;
+        if (to_read > OTA_RECV_BUF_SIZE) {
+            to_read = OTA_RECV_BUF_SIZE;
+        }
+        int r = httpd_req_recv(req, (char *)fw + total, to_read);
+        if (r <= 0) {
+            if (r == HTTPD_SOCK_ERR_TIMEOUT) {
+                continue;
+            }
+            ESP_LOGW(TAG, "gdota recv failed r=%d total=%d", r, total);
+            free(fw);
+            httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "upload interrupted");
+            return ESP_FAIL;
+        }
+        total += r;
+    }
+    ESP_LOGI(TAG, "gdota upload recv done total=%d", total);
+
+    esp_err_t ret = gd_ota_begin(fw, total);
+    free(fw);
+    if (ret != ESP_OK) {
+        const char *msg = "启动 GD32 OTA 失败";
+        if (ret == ESP_ERR_INVALID_STATE) msg = "已有升级任务进行中";
+        else if (ret == ESP_ERR_INVALID_SIZE) msg = "固件为空或超过上限";
+        else if (ret == ESP_ERR_NO_MEM) msg = "内存不足";
+        return send_json_status_msg(req, "error", msg);
+    }
+    return send_json_status_msg(req, "ok", "已开始向 GD32 推送固件");
+}
+
+static esp_err_t handle_gdota_status(httpd_req_t *req)
+{
+    gdota_phase_t phase;
+    int percent = 0;
+    gd_ota_get_state(&phase, &percent);
+
+    const char *p = "idle";
+    switch (phase) {
+    case GDOTA_BUSY:  p = "busy";  break;
+    case GDOTA_DONE:  p = "done";  break;
+    case GDOTA_ERROR: p = "error"; break;
+    default: break;
+    }
+
+    cJSON *obj = cJSON_CreateObject();
+    cJSON_AddStringToObject(obj, "phase", p);
+    cJSON_AddNumberToObject(obj, "percent", percent);
+    if (phase == GDOTA_ERROR) {
+        const char *err = gd_ota_get_error();
+        cJSON_AddStringToObject(obj, "error", err ? err : "未知错误");
+    }
+    esp_err_t ret = send_json_obj(req, obj);
+    cJSON_Delete(obj);
+    return ret;
+}
+
+
+static esp_err_t handle_gdota_config_get(httpd_req_t *req)
+{
+    if (!advanced_password_ok(req)) {
+        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "advanced settings password required");
+        return ESP_FAIL;
+    }
+    gdota_config_t cfg;
+    gd_ota_load_config(&cfg);
+    cJSON *obj = cJSON_CreateObject();
+    cJSON_AddBoolToObject(obj, "enabled", cfg.enabled);
+    cJSON_AddNumberToObject(obj, "uart", cfg.uart_num);
+    cJSON_AddNumberToObject(obj, "tx", cfg.tx_gpio);
+    cJSON_AddNumberToObject(obj, "rx", cfg.rx_gpio);
+    cJSON_AddNumberToObject(obj, "baud", cfg.baud);
+    cJSON_AddNumberToObject(obj, "slave", cfg.slave);
+    cJSON_AddNumberToObject(obj, "reg", cfg.trigger_reg);
+    cJSON_AddNumberToObject(obj, "value", cfg.trigger_value);
+    esp_err_t ret = send_json_obj(req, obj);
+    cJSON_Delete(obj);
+    return ret;
+}
+
+static esp_err_t handle_gdota_config_post(httpd_req_t *req)
+{
+    if (!advanced_password_ok(req)) {
+        httpd_resp_send_err(req, HTTPD_401_UNAUTHORIZED, "advanced settings password required");
+        return ESP_FAIL;
+    }
+    char buf[MAX_POST_BODY];
+    esp_err_t ret = recv_body(req, buf, sizeof(buf));
+    if (ret != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "bad body");
+        return ret;
+    }
+    cJSON *root = cJSON_Parse(buf);
+    if (!root) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "invalid json");
+        return ESP_FAIL;
+    }
+    gdota_config_t cfg;
+    gd_ota_load_config(&cfg);
+
+    /* OTA 串口固定复用 modbus 那一路（UART1 / GPIO8 / GPIO9 / 115200），不随请求改 */
+    cfg.uart_num = 1;
+    cfg.tx_gpio = 8;
+    cfg.rx_gpio = 9;
+    cfg.baud = 115200;
+
+    cJSON *j = cJSON_GetObjectItem(root, "enabled");
+    if (cJSON_IsBool(j)) cfg.enabled = cJSON_IsTrue(j);
+    j = cJSON_GetObjectItem(root, "slave");
+    if (cJSON_IsNumber(j) && j->valueint >= 1 && j->valueint <= 247) cfg.slave = (uint8_t)j->valueint;
+    j = cJSON_GetObjectItem(root, "reg");
+    if (cJSON_IsNumber(j) && j->valueint >= 0 && j->valueint <= 65535) cfg.trigger_reg = (uint16_t)j->valueint;
+    j = cJSON_GetObjectItem(root, "value");
+    if (cJSON_IsNumber(j) && j->valueint >= 0 && j->valueint <= 65535) cfg.trigger_value = (uint16_t)j->valueint;
+    cJSON_Delete(root);
+
+    if (cfg.tx_gpio < 0 || cfg.rx_gpio < 0 || cfg.tx_gpio == cfg.rx_gpio) {
+        httpd_resp_send_err(req, HTTPD_400_BAD_REQUEST, "tx/rx 不能相同且需有效");
+        return ESP_FAIL;
+    }
+    ret = gd_ota_save_config(&cfg);
+    if (ret != ESP_OK) {
+        httpd_resp_send_err(req, HTTPD_500_INTERNAL_SERVER_ERROR, "save failed");
+        return ret;
+    }
+    cJSON *ok = cJSON_CreateObject();
+    cJSON_AddStringToObject(ok, "status", "ok");
+    ret = send_json_obj(req, ok);
+    cJSON_Delete(ok);
+    return ret;
+}
+
 /* ------------------------------------------------------------------ */
 /* 服务器生命周期                                                       */
 /* ------------------------------------------------------------------ */
@@ -726,7 +845,7 @@ static esp_err_t start_httpd(void)
     }
     httpd_config_t cfg = HTTPD_DEFAULT_CONFIG();
     cfg.lru_purge_enable = true;
-    cfg.max_uri_handlers = 12;
+    cfg.max_uri_handlers = 16;
     cfg.stack_size = 8192;
     return httpd_start(&s_server, &cfg);
 }
@@ -735,7 +854,6 @@ static esp_err_t register_handlers(httpd_handle_t server)
 {
     static const httpd_uri_t uris[] = {
         { .uri = "/",             .method = HTTP_GET,  .handler = handle_root },
-        { .uri = "/api/cert",     .method = HTTP_GET,  .handler = handle_cert_get },
         { .uri = "/api/status",   .method = HTTP_GET,  .handler = handle_status },
         { .uri = "/api/scan",     .method = HTTP_GET,  .handler = handle_scan },
         { .uri = "/api/config",   .method = HTTP_POST, .handler = handle_config_post },
@@ -745,6 +863,10 @@ static esp_err_t register_handlers(httpd_handle_t server)
         { .uri = "/api/ap",       .method = HTTP_POST, .handler = handle_ap_post },
         { .uri = "/api/disconnect", .method = HTTP_POST, .handler = handle_disconnect_post },
         { .uri = "/api/ota",      .method = HTTP_POST, .handler = handle_ota_post },
+        { .uri = "/api/gdota",    .method = HTTP_POST, .handler = handle_gdota_post },
+        { .uri = "/api/gdota/status", .method = HTTP_GET, .handler = handle_gdota_status },
+        { .uri = "/api/gdota/config", .method = HTTP_GET, .handler = handle_gdota_config_get },
+        { .uri = "/api/gdota/config", .method = HTTP_POST, .handler = handle_gdota_config_post },
     };
     for (size_t i = 0; i < sizeof(uris) / sizeof(uris[0]); i++) {
         esp_err_t ret = httpd_register_uri_handler(server, &uris[i]);

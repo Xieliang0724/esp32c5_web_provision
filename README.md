@@ -55,9 +55,8 @@ esp32c5_web_provision/
     ├── config_store.[ch]    # NVS 配置持久化（配网 + 网关）
     ├── wifi_mgr.[ch]        # Wi-Fi 状态机（AP/STA/扫描/静态IP/回退/兜底）
     ├── web_server.[ch]      # HTTP 配网服务器（REST API）
-    ├── modbus_gw.[ch]       # Modbus RTU↔TCP 网关（可选 TLS）
+    ├── modbus_gw.[ch]       # Modbus RTU↔TCP 网关
     ├── rgb_led.[ch]         # WS2812 状态指示灯
-    ├── certs/               # TLS 服务器证书/私钥（私钥不入库）
     └── www/index.html       # 内嵌配网网页（EMBED_FILES）
 ```
 
@@ -109,7 +108,7 @@ idf.py -p /dev/cu.usbmodem* flash monitor      # macOS 串口设备名
 | `CONFIG_PROV_CONNECT_RETRY_MAX` | 5 | STA 失败重试次数，超过后回到配网模式 |
 | `CONFIG_PROV_STA_TIMEOUT_MS` | 20000 | 单次连接超时（毫秒） |
 | `CONFIG_PROV_RESET_GPIO` | 9 | 复位配网按键 GPIO（-1 禁用） |
-| `CONFIG_ESPTOOLPY_FLASHSIZE_8MB` | y | 闪存 8MB（实测 N8R4；N4 板改 4MB） |
+| `CONFIG_ESPTOOLPY_FLASHSIZE_4MB` | y | 默认分区布局按 4MB 闪存配置；其他容量需同步调整分区表 |
 
 ## REST API
 
@@ -122,8 +121,10 @@ idf.py -p /dev/cu.usbmodem* flash monitor      # macOS 串口设备名
 | `/api/reset` | POST | 清除已保存配置并回到配网模式 |
 | `/api/disconnect` | POST | 断开 STA 进入配网模式（保留已保存配置，重启后按原配置联网） |
 | `/api/ap` | POST | `{ap_on: true/false}` 运行时开关热点（仅已联网时允许关闭） |
-| `/api/cert` | GET | 下载设备 TLS 证书（PEM） |
-| `/api/gw` | GET/POST | 读写 Modbus 网关配置 `{enabled, port, baud, tx, rx, client_ip, tls_enabled, tls_port}` |
+| `/api/gw` | GET/POST | 读写 Modbus 网关配置 `{enabled, port, baud, tx, rx, client_ip}` |
+| `/api/gdota` | POST | 上传 GD32 固件 (.bin) 并触发 OTA 推送 |
+| `/api/gdota/status` | GET | 查询 GD32 OTA 进度/状态 |
+| `/api/gdota/config` | GET/POST | 读写 GD32 OTA 开关与触发参数 `{enabled, slave, reg, value}`；UART、引脚和波特率固定 |
 
 ## Modbus RTU ↔ TCP 网关（高级设置）
 
@@ -137,28 +138,29 @@ idf.py -p /dev/cu.usbmodem* flash monitor      # macOS 串口设备名
 | 启用网关 | 关 | 勾选后生效 |
 | 本地 TCP 端口 | 502 | Modbus 明文标准端口 |
 | 允许客户端 IP | 空 | 留空 = 允许所有客户端；填写后仅该 IP 可连 |
-| RTU 波特率 | 9600 | 与 GD32 从站一致 |
-| UART1 TX/RX GPIO | 5 / 6 | 按接线修改，勿用 GPIO11/12（控制台）与 27（RGB） |
-| 启用 TLS | 关 | 单向 TLS（服务端证书），与明文 502 并存 |
-| TLS 端口 | 802 | Modbus Security 标准端口 |
+| RTU 波特率 | 115200（固定） | 与 GD32 从站一致 |
+| UART1 TX/RX GPIO | 8 / 9（固定） | 固定，无需配置 |
 
-**接线**：ESP32 `TX GPIO5` → GD32 `RX`，ESP32 `RX GPIO6` ← GD32 `TX`，共地 GND。TCP 请求中的单元号（MBAP uid）即 RTU 从站地址。
+**接线**：ESP32 `TX GPIO8` → GD32 `RX`，ESP32 `RX GPIO9` ← GD32 `TX`，共地 GND。TCP 请求中的单元号（MBAP uid）即 RTU 从站地址。
 
-### Modbus TLS（v1.1.0+）
 
-- 启用后设备同时监听 **明文 502** 和 **TLS 802** 两个端口
-- **单向 TLS**：客户端验证设备证书（`CN=esp32c5.local`，自签名，10 年），设备不验证客户端
-- 测试握手：`openssl s_client -connect <设备IP>:802 -servername esp32c5.local`
-- 自签名证书客户端会提示"不受信任"，属正常
+## GD32 固件 OTA 推送（高级设置）
 
-**替换为自己的证书**：把 `main/certs/server_cert.pem` 和 `server_key.pem` 换成你们自己的（重新编译烧录）。生成自签名证书命令：
+配网页面 **⚙️ 高级设置 → GD32 固件升级 (OTA)** 中选择 GD32 的 `.bin` 固件并点击 **主控固件升级**，ESP32 会：
 
-```bash
-cd main/certs
-openssl req -x509 -newkey rsa:2048 -keyout server_key.pem -out server_cert.pem \
-  -days 3650 -nodes -subj "/CN=esp32c5.local/O=YourOrg" \
-  -addext "subjectAltName=DNS:esp32c5.local,IP:192.168.4.1"
-```
+1. **复用 Modbus 这一路 UART**（ESP32 `UART1`，TX=8/RX=9）向 GD32 `USART2(PA2/PA3)` 发送一条 **Modbus RTU 单寄存器写**，触发 GD32 进入 bootloader。
+2. 推送前 ESP32 会临时停掉 Modbus 网关，等待 GD32 bootloader 在同一个 UART（USART2/PA2-PA3）就绪。
+3. 按协议把固件以 `SYNC/START/DATA/END` 帧推送给 GD32，校验完成后 GD32 自动重启，ESP32 再恢复 Modbus 网关。
+
+**接线**：ESP32 `TX GPIO8` → GD32 `PA3`(USART2_RX)，ESP32 `RX GPIO9` ← GD32 `PA2`(USART2_TX)，共地。
+
+| 配置项 | 默认 | 说明 |
+|---|---|---|
+| 串口 | UART1（固定） | 固定复用 Modbus 网关那一路 |
+| TX / RX GPIO | 8 / 9（固定） | 与 Modbus 网关一致，无需配置 |
+| 波特率 | 115200（固定） | 与 GD32 bootloader 一致 |
+
+> ⚠️ 受 GD32 bootloader RAM 缓冲限制，当前仅支持 **≤ 64KB** 的固件。
 
 ## v1.2.2 可靠性修复详情（2026-08-22，代码审查）
 
@@ -207,10 +209,10 @@ openssl req -x509 -newkey rsa:2048 -keyout server_key.pem -out server_cert.pem \
 
 ### 🔒 安全（商用前重点评估）
 
-- **所有 HTTP API 无任何鉴权**，且设备入网后 Web 服务常驻监听（路由器分配的 IP）：同网段任意设备可读取状态、**修改 Wi-Fi 配置、恢复出厂、修改/停用 Modbus 网关**。Modbus 明文 502 端口同理。
+- **配网、状态、复位等 HTTP API 无鉴权**；设备入网后 Web 服务常驻监听（路由器分配的 IP），同网段设备可修改 Wi-Fi 配置或恢复出厂。网关和固件升级接口使用固定高级密码，但仍通过 HTTP 明文传输；Modbus TCP 也为明文。
   - 建议：部署于可信网段/独立 VLAN 或在交换机层隔离；客户端 IP 白名单仅是过滤不是防护
   - 后续可加可配置访问令牌（token）
-- 配网凭据经 HTTP 明文传输（SoftAP 场景可接受；经路由器 LAN 访问时注意嗅探风险，TLS 仅覆盖 Modbus 端口，配网页面始终是 HTTP）
+- 配网凭据经 HTTP 明文传输（SoftAP 场景可接受；经路由器 LAN 访问时请注意风险，本固件未启用 TLS）
 
 ### ⚠️ 已知中优先级问题（特定条件触发）
 
@@ -234,15 +236,17 @@ openssl req -x509 -newkey rsa:2048 -keyout server_key.pem -out server_cert.pem \
 
 ## 版本管理（git tag）
 
-当前已发布至 **v1.2.5**（新增 Modbus 网关高级参数固定密码保护，密码为 `geekplus`；同时包含 v1.2.4 的网关停止竞态、AP 名称拼接越界、Wi-Fi 自断开标志残留及配网页面热点提示修复），固件内置版本号（网页状态面板 / `/api/status` / 串口日志 `App version:` 均可查看）。
+当前版本为 **v2.0.0**。本版移除了 Modbus TLS，并新增 GD32 主控 OTA；GD32 端需安装配套 Bootloader，UART 接线为 ESP32 GPIO8 TX → GD32 PA3 RX、GPIO9 RX ← PA2 TX。
 
 **发布新版本**（改完代码后）：
 
 ```bash
 git add -A
-git commit -m "v1.2.5: 增加高级网关参数密码保护"
-git tag -a v1.2.5 -m "v1.2.5"
-idf.py build && idf.py -p /dev/cu.usbserial-5C310834821 flash
+git commit -m "v2.0.0: 增加 GD32 OTA 并固定网关 UART"
+git tag -a v2.0.0 -m "v2.0.0"
+git push origin main
+git push origin v2.0.0
+idf.py build && idf.py -p <serial-port> flash
 ```
 
 **回退到旧版本**（出问题时一键回到上个可用版本）：
