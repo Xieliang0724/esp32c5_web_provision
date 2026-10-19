@@ -260,8 +260,8 @@ static void on_ap_fallback_timeout(void *arg)
     if (s_ap_on) {
         return;   /* AP 已开 */
     }
-    ESP_LOGW(TAG, "STA down too long, enabling fallback AP");
-    wifi_mgr_ap_enable();
+    ESP_LOGW(TAG, "STA down too long, switching to AP-only config mode");
+    wifi_mgr_enter_config_mode();
 }
 
 /* 在 STA 断开且 AP 关闭时，延迟开启 AP 兜底（短暂抖动不触发）。
@@ -380,7 +380,7 @@ void wifi_mgr_enter_config_mode(void)
 
     wifi_ap_config_t ap_cfg;
     build_ap_config(&ap_cfg);
-    apply_wifi_mode(WIFI_MODE_APSTA, &ap_cfg, NULL);
+    apply_wifi_mode(WIFI_MODE_AP, &ap_cfg, NULL);
 }
 
 void wifi_mgr_connect(const wifi_config_data_t *cfg)
