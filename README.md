@@ -236,16 +236,16 @@ idf.py -p /dev/cu.usbmodem* flash monitor      # macOS 串口设备名
 
 ## 版本管理（git tag）
 
-当前版本为 **v2.0.0**。本版移除了 Modbus TLS，并新增 GD32 主控 OTA；GD32 端需安装配套 Bootloader，UART 接线为 ESP32 GPIO8 TX → GD32 PA3 RX、GPIO9 RX ← PA2 TX。
+当前版本为 **v2.0.1**。本版修复 STA 长时间断开后的 AP 自动兜底启动顺序，并包含 v2.0.0 的 GD32 主控 OTA 功能。GD32 端需安装配套 Bootloader，UART 接线为 ESP32 GPIO8 TX → GD32 PA3 RX、GPIO9 RX ← PA2 TX。
 
 **发布新版本**（改完代码后）：
 
 ```bash
 git add -A
-git commit -m "v2.0.0: 增加 GD32 OTA 并固定网关 UART"
-git tag -a v2.0.0 -m "v2.0.0"
+git commit -m "v2.0.1: 修复 STA 断线后 AP 兜底"
+git tag -a v2.0.1 -m "v2.0.1"
 git push origin main
-git push origin v2.0.0
+git push origin v2.0.1
 idf.py build && idf.py -p <serial-port> flash
 ```
 
